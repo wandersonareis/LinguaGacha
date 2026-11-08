@@ -23,6 +23,7 @@ export default defineConfig(({ command }) => {
             "game-prepare-worker-entry": project_path(
               "src/backend/file/shared/game/prepare-worker-entry.ts",
             ),
+            "plugin-host-entry": project_path("src/backend/plugin/host-entry.ts"),
             "compute-worker-entry": project_path("src/backend/worker/compute-worker-entry.ts"),
             "planning-worker-entry": project_path(
               "src/backend/batch-translation/planning/planning-worker-entry.ts",
