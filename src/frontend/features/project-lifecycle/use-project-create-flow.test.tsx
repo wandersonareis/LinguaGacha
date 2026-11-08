@@ -138,7 +138,7 @@ it("取消保存位置不创建也不预置草稿", async () => {
     paths: [],
   });
   await create();
-  expect(mocks.api).not.toHaveBeenCalled();
+  expect(mocks.api.mock.calls.filter(([route]) => route !== "/api/formats/catalog")).toEqual([]);
   expect(mocks.navigate).not.toHaveBeenCalled();
   expect(flow.open).toBe(true);
   expect(flow.source_selection_disabled).toBe(false);

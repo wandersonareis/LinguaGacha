@@ -13,6 +13,10 @@ it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍�
   const flow: ReturnType<typeof useProjectCreateFlow> = {
     open,
     selected_source: null,
+    formats: [],
+    plugins: [],
+    plugin_diagnostics: [],
+    set_plugin_enabled: vi.fn(),
     source_selection_disabled: false,
     is_language_dialog_open: true,
     create_languages: { source_language: "JA", target_language: "ZH" },

@@ -117,5 +117,10 @@ export const en_us_project = {
     ffx_strings_desc: "FFX Resources exported Strings format (Java properties-like key=value)",
     ffx_po: "FFX Resources PO",
     ffx_po_desc: "FFX Resources exported PO (gettext) with source, target, and entry metadata",
+    plugin_title: "Format plugins",
+    plugin_hint: "Plugin folder: plugins in the app data directory",
+    plugin_enabled: "Enabled",
+    plugin_disabled: "Disabled",
+    plugin_diagnostics: "Plugins that failed to load",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

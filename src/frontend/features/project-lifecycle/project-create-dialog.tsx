@@ -97,7 +97,13 @@ export function ProjectCreateDialog(props: {
             </AppContextMenuItem>
           </AppContextMenuContent>
         </AppContextMenu>
-        <ProjectSourceFormats format_hit_counts={flow.selected_source?.format_hit_counts} />
+        <ProjectSourceFormats
+          format_hit_counts={flow.selected_source?.format_hit_counts}
+          formats={flow.formats}
+          plugins={flow.plugins}
+          diagnostics={flow.plugin_diagnostics}
+          on_plugin_toggle={flow.set_plugin_enabled}
+        />
         <p className="project-lifecycle__notice">
           <Lightbulb aria-hidden="true" />
           <span className="project-lifecycle__notice-text">

@@ -5,7 +5,7 @@ import {
   format_agent_path_request,
   type AgentInputStep,
 } from "@frontend/app/navigation/agent-input-steps";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDesktopState } from "@frontend/app/state/use-desktop-state";
 import type { SettingsSnapshot } from "@frontend/app/state/desktop-state-context";
 import { useI18n, type LocaleKey } from "@frontend/app/locale/locale-context";
@@ -18,7 +18,9 @@ import { useGameBackupConfirm } from "@frontend/features/game-backup-confirm/use
 import { GODOT_PACK_ORDER_REFRESH_ACTION } from "@shared/godot";
 import { format_local_timestamp } from "@shared/utils/format-local-timestamp";
 import {
+  BUILTIN_FORMAT_CATALOG,
   PROJECT_SOURCE_FORMATS,
+  type FormatPluginCatalog,
   type ProjectSourceFormatHitCounts,
   type ProjectSourceFileSummary,
 } from "@shared/project-source-formats";
@@ -85,15 +87,19 @@ function normalize_count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
-/** API 边界按共享目录补齐全部格式计数，缺失或无效值归零。 */
+/** API 边界补齐内置格式计数，并保留插件格式的额外键。 */
 function normalize_project_source_format_hit_counts(value: unknown): ProjectSourceFormatHitCounts {
   const record =
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  return Object.fromEntries(
+  const counts = Object.fromEntries(
     PROJECT_SOURCE_FORMATS.map((format) => [format.id, normalize_count(record[format.id])]),
   ) as ProjectSourceFormatHitCounts;
+  for (const [id, count] of Object.entries(record)) {
+    if (!(id in counts)) counts[id] = normalize_count(count);
+  }
+  return counts;
 }
 
 /** 收集非空默认预设名称，用于新建成功后的信息提示。 */
@@ -149,11 +155,40 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     read_project_language_preference,
   );
   const [open, set_open] = useState(false);
+  const [format_catalog, set_format_catalog] = useState<FormatPluginCatalog>({
+    formats: BUILTIN_FORMAT_CATALOG,
+    plugins: [],
+    diagnostics: [],
+  });
   const source_selection_disabled = is_source_checking || is_creating_project; // 摘要与创建共用来源快照，期间冻结所有编辑入口。
 
   /** 清空本次创建的来源选择。 */
   function clear_selected_source(): void {
     set_selected_source(null);
+  }
+
+  /** 插件目录在对话框打开前读取；失败时保留内置目录。 */
+  useEffect(() => {
+    void api_fetch<FormatPluginCatalog>("/api/formats/catalog", {})
+      .then((catalog) => {
+        if (catalog !== undefined && catalog !== null) set_format_catalog(catalog);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  /** 启停插件后应用后端返回的同一份目录快照。 */
+  async function set_plugin_enabled(plugin_id: string, enabled: boolean): Promise<void> {
+    try {
+      set_format_catalog(
+        await api_fetch<FormatPluginCatalog>("/api/formats/set-enabled", {
+          id: plugin_id,
+          enabled,
+        }),
+      );
+      set_selected_source(null); // 目录变化后摘要需要重新计算
+    } catch (error) {
+      push_error_toast(t("app.feedback.modify_failed"), error);
+    }
   }
 
   /** 选择一个或多个源路径后，让后端按支持格式收集真实导入文件。 */
@@ -377,6 +412,10 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     start_from_paths,
     close: () => set_open(false),
     selected_source,
+    formats: format_catalog.formats,
+    plugins: format_catalog.plugins,
+    plugin_diagnostics: format_catalog.diagnostics,
+    set_plugin_enabled,
     source_selection_disabled,
     is_language_dialog_open,
     create_languages,

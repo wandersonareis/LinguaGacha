@@ -96,5 +96,10 @@ export const ja_jp_project = {
     ffx_po: "FFX Resources PO",
     ffx_po_desc:
       "FFX Resources から出力された PO（gettext）。原文、訳文、エントリのメタデータを含む",
+    plugin_title: "フォーマットプラグイン",
+    plugin_hint: "プラグインフォルダー: アプリデータ内の plugins",
+    plugin_enabled: "有効",
+    plugin_disabled: "無効",
+    plugin_diagnostics: "読み込めなかったプラグイン",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

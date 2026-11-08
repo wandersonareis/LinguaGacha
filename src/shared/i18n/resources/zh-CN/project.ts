@@ -109,5 +109,10 @@ export const zh_cn_project = {
     ffx_strings_desc: "FFX Resources 导出的 Strings 格式（类 Java properties key=value）",
     ffx_po: "FFX Resources PO",
     ffx_po_desc: "FFX Resources 导出的 PO（gettext），包含原文、译文和条目元数据",
+    plugin_title: "格式插件",
+    plugin_hint: "插件目录：应用数据目录下的 plugins 文件夹",
+    plugin_enabled: "已启用",
+    plugin_disabled: "已停用",
+    plugin_diagnostics: "未加载的插件",
   },
 } as const;

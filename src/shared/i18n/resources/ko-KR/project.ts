@@ -94,5 +94,10 @@ export const ko_kr_project = {
     ffx_strings_desc: "FFX Resources에서 내보낸 Strings 형식 (Java properties 스타일 key=value)",
     ffx_po: "FFX Resources PO",
     ffx_po_desc: "FFX Resources에서 내보낸 PO(gettext) 형식(원문, 번역, 항목 메타데이터 포함)",
+    plugin_title: "형식 플러그인",
+    plugin_hint: "플러그인 폴더: 앱 데이터의 plugins",
+    plugin_enabled: "사용",
+    plugin_disabled: "사용 안 함",
+    plugin_diagnostics: "로드하지 못한 플러그인",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

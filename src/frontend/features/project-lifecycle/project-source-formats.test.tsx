@@ -1,10 +1,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "@frontend/app/locale/locale-provider";
 import { create_text_resolver, type LocaleKey } from "@shared/i18n";
 import {
+  BUILTIN_FORMAT_CATALOG,
   PROJECT_SOURCE_FORMATS,
   type ProjectSourceFormatHitCounts,
 } from "@shared/project-source-formats";
@@ -65,5 +66,55 @@ describe("ProjectSourceFormats", () => {
     }
     expect(container.querySelectorAll("h3 [tabindex]").length).toBeGreaterThan(0);
     expect(find_tag("project.formats.md").querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
+  it("列出插件、切换启停并显示未加载诊断", async () => {
+    const toggle = vi.fn();
+    await act(async () =>
+      root.render(
+        <LocaleProvider locale="zh-CN">
+          <ProjectSourceFormats
+            formats={[
+              ...BUILTIN_FORMAT_CATALOG,
+              {
+                source_kind: "file",
+                id: "sample",
+                support_status: "supported",
+                detection: "extension",
+                extension: ".sample",
+                extensions: [".sample"],
+                title: "Sample",
+                description: "Sample format",
+                plugin_id: "sample",
+              },
+            ]}
+            plugins={[
+              {
+                id: "sample",
+                name: "Sample",
+                description: "Sample format",
+                version: "1.0.0",
+                api_version: 1,
+                extensions: [".sample"],
+                file_types: ["SAMPLE"],
+                detection: "extension",
+                enabled: true,
+              },
+            ]}
+            diagnostics={[{ directory: "E:/plugins/broken", message: "Invalid manifest." }]}
+            on_plugin_toggle={toggle}
+          />
+        </LocaleProvider>,
+      ),
+    );
+
+    expect(container.textContent).toContain(t("project.formats.plugin_title"));
+    expect(find_tag("project.formats.txt")).toBeDefined();
+    expect(container.textContent).toContain("Sample");
+    const button = container.querySelector<HTMLButtonElement>("button[aria-pressed]");
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => button?.click());
+    expect(toggle).toHaveBeenCalledWith("sample", false);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Invalid manifest.");
   });
 });

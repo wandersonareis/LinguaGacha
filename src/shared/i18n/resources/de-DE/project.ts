@@ -102,5 +102,10 @@ export const de_de_project = {
     ffx_po: "FFX Resources PO",
     ffx_po_desc:
       "Von FFX Resources exportiertes PO (gettext) mit Quelltext, Übersetzung und Eintragsmetadaten",
+    plugin_title: "Format-Plugins",
+    plugin_hint: "Plugin-Ordner: plugins im App-Datenverzeichnis",
+    plugin_enabled: "Aktiviert",
+    plugin_disabled: "Deaktiviert",
+    plugin_diagnostics: "Plugins, die nicht geladen werden konnten",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;
