@@ -37,6 +37,11 @@ export const ITEM_FILE_TYPES = [
   "TYRANO",
   "KVJSON",
   "MESSAGEJSON",
+  "FFX_JSON",
+  "FFX_CSV",
+  "FFX_XLSX",
+  "FFX_STRINGS",
+  "FFX_PO",
   "GENERIC",
 ] as const;
 

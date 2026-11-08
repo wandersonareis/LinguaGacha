@@ -106,5 +106,18 @@ export const pt_br_project = {
     trans_export: "Texto de jogo Translator++",
     wolf: "Texto de jogo exportado pela ferramenta oficial de tradução do WOLF",
     trans: "Arquivo de projeto Translator++",
+    ffx_json: "FFX Resources JSON",
+    ffx_json_desc: "JSON exportado do FFX Resources, com metadados, linhas e deduplicação por hash",
+    ffx_csv: "FFX Resources CSV",
+    ffx_csv_desc:
+      "CSV exportado do FFX Resources (key, id, name, index, lang, hash, text, divergent)",
+    ffx_xlsx: "FFX Resources XLSX",
+    ffx_xlsx_desc: "XLSX exportado do FFX Resources, com proteção de planilha e formatação de colunas",
+    ffx_strings: "FFX Resources Strings",
+    ffx_strings_desc:
+      "Formato Strings exportado do FFX Resources (chave=valor, semelhante a Java properties)",
+    ffx_po: "FFX Resources PO",
+    ffx_po_desc:
+      "PO (gettext) exportado do FFX Resources, com texto original, tradução e metadados dos itens",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

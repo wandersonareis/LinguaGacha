@@ -176,11 +176,57 @@ export const PROJECT_SOURCE_FORMATS = [
     title_key: "project.formats.trans",
     description_keys: [],
   },
+  {
+    source_kind: "file",
+    id: "ffx_json",
+    support_status: "supported",
+    detection: "content",
+    extension: ".json",
+    title_key: "project.formats.ffx_json",
+    description_keys: ["project.formats.ffx_json_desc"],
+  },
+  {
+    source_kind: "file",
+    id: "ffx_csv",
+    support_status: "supported",
+    detection: "extension",
+    extension: ".csv",
+    title_key: "project.formats.ffx_csv",
+    description_keys: ["project.formats.ffx_csv_desc"],
+  },
+  {
+    source_kind: "file",
+    id: "ffx_xlsx",
+    support_status: "supported",
+    detection: "content",
+    extension: ".xlsx",
+    title_key: "project.formats.ffx_xlsx",
+    description_keys: ["project.formats.ffx_xlsx_desc"],
+  },
+  {
+    source_kind: "file",
+    id: "ffx_strings",
+    support_status: "supported",
+    detection: "extension",
+    extension: ".strings",
+    title_key: "project.formats.ffx_strings",
+    description_keys: ["project.formats.ffx_strings_desc"],
+  },
+  {
+    source_kind: "file",
+    id: "ffx_po",
+    support_status: "supported",
+    detection: "extension",
+    extension: ".po",
+    title_key: "project.formats.ffx_po",
+    description_keys: ["project.formats.ffx_po_desc"],
+  },
 ] as const satisfies ReadonlyArray<{
   source_kind: "file" | "game";
   id: string;
   file_type?: GameFileType;
   support_status: "supported" | "deprecated" | "internal"; // 只表达产品支持策略，来源发现与统计仍使用完整目录。`internal` 格式由 AGENT 产出，工程创建界面不展示
+  detection?: "extension" | "content"; // 缺省按扩展名建立来源身份；共享扩展名的格式可改为按内容识别。
   extension: string;
   title_key: LocaleKey;
   description_keys: readonly LocaleKey[];

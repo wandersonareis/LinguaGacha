@@ -692,3 +692,119 @@ it.each(["missing", "mismatch"])("MESSAGEJSON %s 在本文件写入前报告错�
   );
   expect(fs.readFileSync(path.join(temp.path, "story.json"), "utf8")).toBe("existing output");
 });
+
+it("新来源按内容识别 FFX，已保存的标准 JSON 身份保持不变", async () => {
+  const service = create_service();
+  const ffx_json = Buffer.from(
+    JSON.stringify({
+      battle: {
+        metadata: { key: "battle" },
+        rows: [{ index: 0, text: { us: "Potion" } }],
+      },
+    }),
+    "utf8",
+  );
+
+  await expect(service.parse_asset("resources.json", ffx_json)).resolves.toMatchObject({
+    file_type: "FFX_JSON",
+    items: [{ src: "Potion", row: 0 }],
+  });
+  await expect(service.parse_asset("resources.json", ffx_json, "KVJSON")).resolves.toMatchObject({
+    file_type: "KVJSON",
+  });
+  await expect(
+    service.parse_asset("standard.json", Buffer.from('[{"message":"hello"}]')),
+  ).resolves.toMatchObject({ file_type: "MESSAGEJSON" });
+  const ffx_xlsx = await spreadsheet_fixture({
+    A1: "key",
+    B1: "id",
+    C1: "name",
+    D1: "index",
+    E1: "lang",
+    F1: "hash",
+    G1: "text",
+    H1: "source",
+    I1: "target",
+    J1: "divergent",
+    A2: "battle",
+    B2: "1",
+    C2: "Potion",
+    D2: "0",
+    E2: "us",
+    F2: "abc",
+    G2: "Potion",
+    H2: "",
+    I2: "",
+    J2: "false",
+  });
+  await expect(service.parse_asset("resources.xlsx", ffx_xlsx)).resolves.toMatchObject({
+    file_type: "FFX_XLSX",
+    items: [{ src: "Potion", row: 0 }],
+  });
+});
+
+it("FFX PO 按扩展名识别、按内容校验并解析 source/target", async () => {
+  const service = create_service();
+  const content = Buffer.from(
+    [
+      'msgid ""',
+      'msgstr ""',
+      '"Language: pt-BR\\n"',
+      "",
+      '#. import: {"file":"ffx/battle/btl/bika00_10/bika00_10.bin","name":"bika00_10","index":0,"lang":"us","hash":"$45c331fabe140a27"}',
+      "#: ffx/battle/btl/bika00_10/bika00_10.bin:0",
+      'msgctxt "bika00_10|0"',
+      'msgid "Whew!"',
+      'msgstr "Uau!"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await expect(service.parse_asset("battle.po", content)).resolves.toMatchObject({
+    file_type: "FFX_PO",
+    items: [{ src: "Whew!", dst: "", row: 0, status: "NONE" }],
+  });
+  await expect(service.parse_asset("broken.po", Buffer.from("not a po file"))).rejects.toThrow(
+    "FFX PO format requires msgid/msgstr entries",
+  );
+});
+
+it("FFX PO 导出译文并保留未处理条目的原 msgstr", async () => {
+  using temp = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-ffx-po-"));
+  const service = create_service();
+  const content = Buffer.from(
+    [
+      'msgid ""',
+      'msgstr ""',
+      '"Language: pt-BR\\n"',
+      "",
+      '#. import: {"file":"ffx/battle/btl/bika00_10/bika00_10.bin","name":"bika00_10","index":0,"lang":"us","hash":"$45c331fabe140a27"}',
+      "#: ffx/battle/btl/bika00_10/bika00_10.bin:0",
+      'msgctxt "bika00_10|0"',
+      'msgid "Whew!"',
+      'msgstr "Uau!"',
+      "",
+      '#. import: {"file":"ffx/battle/btl/bika00_10/bika00_10.bin","name":"bika00_10","index":1,"lang":"us","hash":"$e823b577a59b6e31"}',
+      "#: ffx/battle/btl/bika00_10/bika00_10.bin:1",
+      'msgctxt "bika00_10|1"',
+      'msgid "Need some help?"',
+      'msgstr "Precisa de ajuda?"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const parsed = await service.parse_asset("battle.po", content);
+  if (parsed.kind !== "items") throw new Error("Expected FFX PO items");
+  const [first, second] = parsed.items;
+  const output = path.join(temp.path, "translated");
+  await service.write_items([{ ...first!, status: "PROCESSED", dst: "New text" }, second!], {
+    paths: { translated_path: output, bilingual_path: path.join(temp.path, "bilingual") },
+    source_files: [{ path: "battle.po", file_type: "FFX_PO" }],
+    asset_reader: () => content,
+  });
+  const text = fs.readFileSync(path.join(output, "battle.po"), "utf8");
+  expect(text).toContain('"Language: ZH\\n"');
+  expect(text).toContain('msgstr "New text"');
+  expect(text).toContain('msgstr "Precisa de ajuda?"');
+});

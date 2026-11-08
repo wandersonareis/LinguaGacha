@@ -52,6 +52,8 @@
 
 用一个 `workspace_run` 脚本读取 `project_meta` 和 `pages` 的处置统计，按用户请求确定目标：
 
+- **必须从 `project_meta.json` 读取 `target_language`，作为本次翻译的目标语言**。所有译文均按该语言形成。
+
 |请求|目标|
 |---|---|
 |翻译、续做，未限定范围|`translation` 为 `null` 的页面|

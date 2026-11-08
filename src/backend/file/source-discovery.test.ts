@@ -158,3 +158,19 @@ it("发现目录保留入口名称和文件名空格，过滤空输入并去重"
     ),
   ).toEqual(["left/ script.txt", "left/script.txt", "right/script.txt"]);
 });
+
+it("目录发现按扩展名识别独占的 FFX 格式，共用扩展名保留通用身份", async () => {
+  using temp = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-source-ffx-"));
+  fs.writeFileSync(path.join(temp.path, "battle.po"), 'msgid ""\nmsgstr ""\n');
+  fs.writeFileSync(path.join(temp.path, "text.csv"), "key,id\n");
+  fs.writeFileSync(path.join(temp.path, "strings.strings"), "k = v\n");
+  fs.writeFileSync(path.join(temp.path, "saved.json"), "{}");
+
+  const entries = await discover_sources([temp.path], new NativeFs());
+  expect(entries.map((entry) => [path.basename(entry.source_path), entry.source])).toEqual([
+    ["battle.po", { kind: "file", format: "ffx_po" }],
+    ["saved.json", { kind: "file", format: "json" }],
+    ["strings.strings", { kind: "file", format: "ffx_strings" }],
+    ["text.csv", { kind: "file", format: "ffx_csv" }],
+  ]);
+});

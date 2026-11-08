@@ -83,5 +83,16 @@ export const ko_kr_project = {
     trans_export: "Translator++에서 내보낸 게임 텍스트",
     wolf: "WOLF 공식 번역 도구에서 내보낸 게임 텍스트",
     trans: "Translator++ 프로젝트 파일",
+    ffx_json: "FFX Resources JSON",
+    ffx_json_desc: "FFX Resources에서 내보낸 JSON (메타데이터, 행, 해시 기반 중복 제거 포함)",
+    ffx_csv: "FFX Resources CSV",
+    ffx_csv_desc:
+      "FFX Resources에서 내보낸 CSV (key, id, name, index, lang, hash, text, divergent)",
+    ffx_xlsx: "FFX Resources XLSX",
+    ffx_xlsx_desc: "FFX Resources에서 내보낸 XLSX (시트 보호, 열 서식 포함)",
+    ffx_strings: "FFX Resources Strings",
+    ffx_strings_desc: "FFX Resources에서 내보낸 Strings 형식 (Java properties 스타일 key=value)",
+    ffx_po: "FFX Resources PO",
+    ffx_po_desc: "FFX Resources에서 내보낸 PO(gettext) 형식(원문, 번역, 항목 메타데이터 포함)",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

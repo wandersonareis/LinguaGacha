@@ -44,6 +44,7 @@ import { TRANSFormat } from "./trans/trans-format";
 import { TXTFormat } from "./txt/txt-format";
 import { XLSXFormat } from "./xlsx/xlsx-format";
 import { EPUBFormat } from "./epub/epub-format";
+import { FFXFormat } from "./ffx/ffx-format";
 import { NativeFs, default_native_fs } from "../../native/native-fs";
 import {
   type FileFormatReadResult,
@@ -96,6 +97,7 @@ export class FileFormatService {
   private readonly trans: TRANSFormat;
   private readonly renpy_rpy: RenpyRpyFormat;
   private readonly epub: EPUBFormat;
+  private readonly ffx: FFXFormat;
   private readonly games: Record<GameFileType, GameFormat>;
 
   /**
@@ -127,6 +129,7 @@ export class FileFormatService {
     this.trans = new TRANSFormat();
     this.renpy_rpy = new RenpyRpyFormat();
     this.epub = new EPUBFormat(config);
+    this.ffx = new FFXFormat(config.target_language);
   }
 
   /**
@@ -161,6 +164,13 @@ export class FileFormatService {
     let type =
       (file_type === "NONE" ? undefined : file_type) ??
       by_extension[path.extname(rel_path).toLowerCase()];
+    // 新来源先尝试 FFX 内容识别；已保存的标准 JSON/XLSX 身份保持不变。
+    if (type === undefined || type.startsWith("FFX_")) {
+      const ffx = await this.try_read_ffx(content, rel_path);
+      if (ffx !== null) return ffx;
+      if (type?.startsWith("FFX_"))
+        return { kind: "items", file_type: type as ItemFileType, items: [] };
+    }
     if (
       type === "KVJSON" ||
       type === "MESSAGEJSON" ||
@@ -227,6 +237,17 @@ export class FileFormatService {
       file_type: type as ItemFileType,
       items: await format.read_from_stream(content, rel_path),
     };
+  }
+
+  /** 只让 FFX 处理器认领其支持的扩展名，标准格式继续走既有分发。 */
+  private async try_read_ffx(
+    content: Uint8Array,
+    rel_path: string,
+  ): Promise<FileFormatReadResult | null> {
+    const extension = path.extname(rel_path).toLowerCase();
+    if (![".json", ".csv", ".xlsx", ".strings", ".po"].includes(extension)) return null;
+    const result = await this.ffx.read_from_stream(content, rel_path);
+    return result.file_type.startsWith("FFX_") ? { kind: "items", ...result } : null;
   }
 
   /** 来源发现到原稿固化共用一次占用，内部发现与准备不重复申请。 */
@@ -573,6 +594,7 @@ export class FileFormatService {
     await this.trans.write_to_path(items, paths, asset_reader);
     await this.renpy_rpy.write_to_path(items, paths, asset_reader);
     await this.epub.write_to_path(items, paths, asset_reader);
+    await this.ffx.write_to_path(items, paths, asset_reader);
     if (failures.length === 1) throw failures[0];
     if (failures.length) throw new AggregateError(failures, "Game assets could not be exported");
   }

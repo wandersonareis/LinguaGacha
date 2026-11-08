@@ -83,5 +83,18 @@ export const ja_jp_project = {
     trans_export: "Translator++ から出力したゲームテキスト",
     wolf: "WOLF 公式翻訳ツールから出力したゲームテキスト",
     trans: "Translator++ プロジェクトファイル",
+    ffx_json: "FFX Resources JSON",
+    ffx_json_desc:
+      "FFX Resources から出力された JSON（メタデータ、行、ハッシュベースの重複除去付き）",
+    ffx_csv: "FFX Resources CSV",
+    ffx_csv_desc:
+      "FFX Resources から出力された CSV（key, id, name, index, lang, hash, text, divergent）",
+    ffx_xlsx: "FFX Resources XLSX",
+    ffx_xlsx_desc: "FFX Resources から出力された XLSX（シート保護、列フォーマット付き）",
+    ffx_strings: "FFX Resources Strings",
+    ffx_strings_desc: "FFX Resources から出力された Strings 形式（Java properties 風 key=value）",
+    ffx_po: "FFX Resources PO",
+    ffx_po_desc:
+      "FFX Resources から出力された PO（gettext）。原文、訳文、エントリのメタデータを含む",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_project>;

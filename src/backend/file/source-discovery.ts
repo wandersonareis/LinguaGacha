@@ -14,11 +14,12 @@ export type SourceIdentity =
   | GameSource
   | Readonly<{ kind: "failure"; error: unknown }>;
 export type DiscoveredSource = ProjectSourceFileEntry & Readonly<{ source: SourceIdentity }>;
+// 目录发现只按扩展名建立来源身份。共享扩展名的 FFX JSON/XLSX 由内容识别决定实际处理器。
 const FORMATS = new Map<string, ProjectSourceFormatId>(
-  PROJECT_SOURCE_FORMATS.filter((format) => format.source_kind === "file").map((format) => [
-    format.extension,
-    format.id,
-  ]),
+  PROJECT_SOURCE_FORMATS.filter(
+    (format) =>
+      format.source_kind === "file" && (!("detection" in format) || format.detection !== "content"),
+  ).map((format) => [format.extension, format.id]),
 );
 
 /** 显式选择检查候选祖先，递归扫描只检查当前目录，按保留名称停止下探。 */
