@@ -106,7 +106,8 @@ describe("AgentMarkdown", () => {
     await act(async () => link.click());
     const rich_text = view.querySelector<HTMLSpanElement>("span");
     expect(rich_text?.textContent).toBe("重点");
-    expect(rich_text?.style.color).toBe("red");
+    // 内联样式属于注入面，渲染时移除；单元格内容仍原样展示。
+    expect(rich_text?.getAttribute("style")).toBeNull();
     expect(mocks.open_external_url).toHaveBeenCalledWith("https://example.com");
     expect(view.querySelector<HTMLImageElement>('img[src="https://example.com/a.png"]')?.alt).toBe(
       "示意图",
@@ -131,6 +132,25 @@ describe("AgentMarkdown", () => {
     expect(event.defaultPrevented).toBe(false);
     expect(mocks.open_external_url).not.toHaveBeenCalled();
     expect(mocks.api_fetch).not.toHaveBeenCalled();
+  });
+
+  it("移除模型输出中的可执行 HTML，只保留安全内容", async () => {
+    const view = await render_markdown(
+      [
+        "<script>window.__xss = 1</script>",
+        '<img src="https://example.com/a.png" onerror="window.__xss = 2">',
+        '<iframe src="https://example.com"></iframe>',
+        '<a href="javascript:window.__xss = 3">点击</a>',
+        "<mark>保留</mark>",
+      ].join("\n\n"),
+      false,
+    );
+    expect(view.querySelector("script")).toBeNull();
+    expect(view.querySelector("iframe")).toBeNull();
+    expect(view.querySelector("img")?.getAttribute("onerror")).toBeNull();
+    expect(view.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(view.querySelector("mark")?.textContent).toBe("保留");
+    expect((window as unknown as Record<string, unknown>)["__xss"]).toBeUndefined();
   });
 
   it("文件 URL 通过 Markdown 过滤，外部文档中的相对文件与图片使用文件入口", async () => {

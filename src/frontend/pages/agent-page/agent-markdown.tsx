@@ -27,6 +27,7 @@ import {
   type MermaidErrorComponentProps,
   type StreamdownTranslations,
 } from "streamdown";
+import type { Plugin } from "unified";
 
 import { useAppearance } from "@frontend/app/appearance/appearance-context";
 import { api_blob } from "@frontend/app/desktop/desktop-api";
@@ -52,8 +53,51 @@ type AgentMarkdownProps = {
 
 const MARKDOWN_DIAGRAM_OPTIONS = { errorComponent: AgentMarkdownDiagramError };
 const MARKDOWN_CONTROLS = { mermaid: { fullscreen: false } };
-// 保留产品的原始 HTML 展示；URL 在唯一转换入口沿用既有协议边界。
-const MARKDOWN_REHYPE_PLUGINS = [defaultRehypePlugins.raw!]; // Streamdown 的 raw 插件是产品保留原始 HTML 的固定依赖。
+// 保留产品的原始 HTML 展示，但只放行安全标签与属性；URL 在唯一转换入口沿用既有协议边界。
+type MarkdownSanitizeSchema = {
+  ancestors?: Record<string, string[]>;
+  attributes?: Record<string, Array<string | readonly [string, ...unknown[]]>>;
+  clobber?: string[];
+  clobberPrefix?: string;
+  protocols?: Record<string, string[]>;
+  required?: Record<string, string[]>;
+  strip?: string[];
+  tagNames?: string[];
+};
+// Streamdown 的默认 sanitize 插件是 `[plugin, schema]` 元组，这里覆写 schema 以保留产品标记。
+const [MARKDOWN_SANITIZE_PLUGIN, MARKDOWN_SANITIZE_SCHEMA] =
+  defaultRehypePlugins.sanitize as unknown as [Plugin, MarkdownSanitizeSchema];
+// 产品自身的类名、data 标记、锚点 id 与本机文件协议需要保留；脚本、事件属性和内联样式仍被移除。
+const MARKDOWN_SANITIZE_OPTIONS = {
+  ...MARKDOWN_SANITIZE_SCHEMA,
+  // 产品用到的安全标签补充到默认白名单。
+  tagNames: [
+    ...(MARKDOWN_SANITIZE_SCHEMA.tagNames ?? []),
+    "mark",
+    "u",
+    "small",
+    "cite",
+    "abbr",
+    "time",
+    "figure",
+    "figcaption",
+  ],
+  attributes: {
+    ...MARKDOWN_SANITIZE_SCHEMA.attributes,
+    "*": [...(MARKDOWN_SANITIZE_SCHEMA.attributes?.["*"] ?? []), "className", "data*"],
+  },
+  protocols: {
+    ...MARKDOWN_SANITIZE_SCHEMA.protocols,
+    href: [...(MARKDOWN_SANITIZE_SCHEMA.protocols?.["href"] ?? []), "file"],
+    src: [...(MARKDOWN_SANITIZE_SCHEMA.protocols?.["src"] ?? []), "file"],
+  },
+  clobber: (MARKDOWN_SANITIZE_SCHEMA.clobber ?? []).filter((name) => name !== "id"),
+};
+const MARKDOWN_SANITIZE: [Plugin, MarkdownSanitizeSchema] = [
+  MARKDOWN_SANITIZE_PLUGIN,
+  MARKDOWN_SANITIZE_OPTIONS,
+];
+const MARKDOWN_REHYPE_PLUGINS = [defaultRehypePlugins.raw!, MARKDOWN_SANITIZE];
 const MARKDOWN_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), MARKDOWN_ALERT];
 const DOCUMENT_REMARK_PLUGINS = [...MARKDOWN_REMARK_PLUGINS, agent_document_headings];
 const MARKDOWN_URL_PROTOCOL = /^(?:https?|ircs?|mailto|xmpp|file)$/iu;
