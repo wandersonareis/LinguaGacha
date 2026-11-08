@@ -122,7 +122,7 @@ describe("quality-rule-file-io", () => {
       },
     ]);
     const cells = await spreadsheet_values(fs.readFileSync(`${base_path}.xlsx`));
-    expect(cells.A2).toBe("'=SUM(A1:A2)");
+    expect(cells.A2).toBe("=SUM(A1:A2)");
   });
 });
 

@@ -890,6 +890,10 @@ export class FFXFormat {
     return hash.startsWith("$") ? hash : `$${hash}`;
   }
 
+  /**
+   * CSV 没有单元格类型，Excel 导入时会按内容重新解释字段；FFX 产物同时供外部工具消费，
+   * 改写以 `=` 开头的值会破坏原稿，因此这里只做 RFC 4180 引号并保持字段原值。
+   */
   private escapeCSV(field: string): string {
     if (field.includes(",") || field.includes('"') || field.includes("\n")) {
       return '"' + field.replace(/"/g, '""') + '"';

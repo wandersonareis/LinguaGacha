@@ -1,5 +1,9 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { create_item } from "../../../domain/item";
 import { spreadsheet_fixture } from "../../../test/spreadsheet-fixture";
 import { FFXFormat } from "./ffx-format";
 
@@ -106,5 +110,61 @@ describe("FFXFormat", () => {
       file_type: "FFX_STRINGS",
       items: [{ src: "Potion", dst: "", row: 0, tag: "battle", status: "NONE" }],
     });
+  });
+
+  it("写回 FFX CSV 时保留公式样式与分隔符译文原文", async () => {
+    using dir = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-ffx-csv-"));
+    const original = Buffer.from(
+      [
+        "key,id,name,index,lang,hash,text,divergent",
+        "menu,1,=SUM(A1:A2),0,us,$abc,=SUM(A1:A2),false",
+        "menu,1,=SUM(A1:A2),0,pt,$def,=SUM(A1:A2),false",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await new FFXFormat("PT").write_to_path(
+      [
+        create_item({
+          src: "=SUM(A1:A2)",
+          dst: "=SUM(A1:A2)",
+          status: "PROCESSED",
+          file_type: "FFX_CSV",
+          file_path: "resources.csv",
+          tag: "menu",
+          extra_field: JSON.stringify({
+            ffx_key: "menu",
+            ffx_id: "1",
+            ffx_name: "=SUM(A1:A2)",
+            ffx_hash: "def",
+            ffx_divergent: false,
+            ffx_translations: { us: { text: "=SUM(A1:A2)", hash: "abc" } },
+          }),
+        }),
+        create_item({
+          src: "- Auto -",
+          dst: "- Auto -",
+          status: "PROCESSED",
+          file_type: "FFX_CSV",
+          file_path: "resources.csv",
+          tag: "menu",
+          row: 1,
+          extra_field: JSON.stringify({
+            ffx_key: "menu",
+            ffx_id: "2",
+            ffx_name: "- Auto -",
+            ffx_hash: "def2",
+            ffx_divergent: false,
+            ffx_translations: { us: { text: "- Auto -", hash: "abc2" } },
+          }),
+        }),
+      ],
+      { translated_path: dir.path, bilingual_path: dir.path },
+      () => original,
+    );
+
+    const written = fs.readFileSync(path.join(dir.path, "resources.csv"), "utf8");
+    expect(written).toContain(",=SUM(A1:A2),");
+    expect(written).toContain(",- Auto -,");
   });
 });

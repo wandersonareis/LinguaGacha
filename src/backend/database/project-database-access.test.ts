@@ -250,6 +250,48 @@ it("patchItemTranslationFields 只更新译文字段并保留条目持久事实"
   ]);
 });
 
+it("条目文本按参数绑定持久化，SQL 元字符保持原文", async () => {
+  const { database, lg_path } = await create_database_project("sql-metacharacters");
+  const src = "'; DROP TABLE items; --";
+  const dst = '"; DELETE FROM items; --';
+  await database.transaction(lg_path, (writer) =>
+    writer.add_asset(lg_path, "demo.txt", Buffer.from("原文"), "TXT", null),
+  );
+
+  await database.transaction(lg_path, (writer) =>
+    writer.set_items(lg_path, [
+      {
+        id: 1,
+        src,
+        dst,
+        name_src: "'); SELECT * FROM assets; --",
+        name_dst: null,
+        status: "NONE",
+        file_path: "demo.txt",
+        file_type: "TXT",
+        row: 0,
+        extra_field: { query: "'); DROP TABLE assets; --" },
+      },
+    ]),
+  );
+
+  // 文本若被拼进 SQL，读取本身就会失败或表已消失。
+  expect(await database.get_all_items(lg_path)).toEqual([
+    {
+      id: 1,
+      src,
+      dst,
+      name_src: "'); SELECT * FROM assets; --",
+      name_dst: null,
+      status: "NONE",
+      file_path: "demo.txt",
+      file_type: "TXT",
+      row: 0,
+      extra_field: { query: "'); DROP TABLE assets; --" },
+    },
+  ]);
+});
+
 it("兼容读取旧压缩 asset bytes", async () => {
   const lg_path = project_path("legacy-asset.lg");
   const db = new DatabaseSync(lg_path);

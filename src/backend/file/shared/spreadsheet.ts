@@ -19,7 +19,11 @@ export function cell_text(value: CellValue): string {
   return String(value);
 }
 
-/** 源工作簿写回只改内容并保留样式；新建规则表可显式指定基础样式。 */
+/**
+ * 源工作簿写回只改内容并保留样式；新建规则表可显式指定基础样式。
+ * 文本按共享字符串单元格写入（`t="s"`），Excel 不会执行其中以 `=` 开头的内容；
+ * 因此保持原值，避免 `'` 前缀把译文改写成另一种文本。
+ */
 export function write_cell(
   sheet: Worksheet,
   row: number,
@@ -28,7 +32,7 @@ export function write_cell(
   font_size?: number,
 ): void {
   const cell = sheet.getCell(row, column);
-  cell.value = typeof value === "string" && value.startsWith("=") ? "'" + value : (value ?? "");
+  cell.value = value ?? "";
   if (font_size !== undefined) {
     cell.font = { size: font_size };
     cell.alignment = { wrapText: true, vertical: "middle", horizontal: "left" };
