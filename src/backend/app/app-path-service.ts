@@ -19,6 +19,8 @@ const USER_DATA_DIR_NAME = "userdata";
 const BERSERKER_DIR_NAME = "berserker";
 const SKILLS_DIR_NAME = "skills";
 const AGENT_WORKSPACE_DIR_NAME = "workspace";
+const PLUGIN_DIR_NAME = "plugins";
+const PLUGIN_STATE_FILE_NAME = "plugins.json";
 const LOG_DIR_NAME = "log";
 const TEMPLATE_DIR_NAME = "template";
 const PRESET_DIR_NAME = "preset";
@@ -224,6 +226,16 @@ export class AppPathService {
    */
   public get_agent_user_skill_dir(): string {
     return this.get_user_data_path(SKILLS_DIR_NAME);
+  }
+
+  /** 返回格式插件根目录；插件目录由用户维护，不随应用版本覆盖。 */
+  public get_format_plugin_root_dir(): string {
+    return this.get_user_data_path(PLUGIN_DIR_NAME);
+  }
+
+  /** 返回格式插件启停状态文件，和插件目录同属用户数据。 */
+  public get_format_plugin_state_path(): string {
+    return this.get_user_data_path(PLUGIN_STATE_FILE_NAME);
   }
 
   /**

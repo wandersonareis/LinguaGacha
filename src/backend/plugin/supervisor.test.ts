@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { builtinModules } from "node:module";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { build } from "vite";
+import { createRequire } from "node:module";
+import { beforeAll, describe, expect, it, vi, inject } from "vitest";
 
 import { NativeFs } from "../../native/native-fs";
 import { PLUGIN_API_VERSION, type PluginManifest } from "./protocol";
 import { PluginSupervisor } from "./supervisor";
+
+// 子进程启动与重启在整套并行测试中会争用 CPU，放宽本文件的用例时限。
+vi.setConfig({ testTimeout: 20_000 });
 
 const native_fs = new NativeFs();
 const MANIFEST: PluginManifest = {
@@ -38,33 +40,10 @@ export default {
 };
 `;
 
-let build_output: string;
 let host_entry: string;
 
-beforeAll(async () => {
-  build_output = fs.mkdtempSync(path.join(os.tmpdir(), "lg-plugin-host-build-"));
-  await build({
-    configFile: false,
-    resolve: { conditions: ["node"], mainFields: ["module", "main"] },
-    publicDir: false,
-    build: {
-      target: "node24",
-      outDir: build_output,
-      emptyOutDir: true,
-      minify: false,
-      lib: {
-        entry: { "plugin-host": path.join(process.cwd(), "src/backend/plugin/host-entry.ts") },
-        formats: ["es"],
-        fileName: () => "plugin-host.mjs",
-      },
-      rolldownOptions: { platform: "node", external: [...builtinModules, /^node:/u] },
-    },
-  });
-  host_entry = path.join(build_output, "plugin-host.mjs");
-}, 120_000);
-
-afterAll(() => {
-  fs.rmSync(build_output, { recursive: true, force: true });
+beforeAll(() => {
+  host_entry = inject("pluginHostEntry");
 });
 
 /** 插件目录与工作根都由用例独占；重写入口即可验证重启。 */
@@ -157,5 +136,28 @@ describe("PluginSupervisor", () => {
     await expect(supervisor.read("a.sample", Buffer.from("x"))).rejects.toMatchObject({
       code: "runtime.disposed",
     });
+  });
+
+  it("权限模型下 Electron 宿主可以启动并读取工作目录", async () => {
+    using temp = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-plugin-supervisor-"));
+    const supervisor = new PluginSupervisor({
+      manifest: MANIFEST,
+      entry_path: create_plugin(temp.path),
+      host_entry,
+      node_executable: createRequire(import.meta.url)("electron") as string,
+      node_env: { ELECTRON_RUN_AS_NODE: "1" },
+      target_language: "PT",
+      timeout_ms: 10_000,
+      hardening: true,
+      log: (line) => console.error(line),
+      native_fs,
+    });
+    try {
+      await expect(supervisor.read("a.sample", Buffer.from("x"))).resolves.toMatchObject({
+        file_type: "SAMPLE",
+      });
+    } finally {
+      await supervisor.dispose();
+    }
   });
 });

@@ -29,6 +29,8 @@ import {
   type OutputFolderOpener,
 } from "../file/translation-file-generation-service";
 import { LogManager } from "../log/log-manager";
+import { FormatPluginService } from "../plugin/format-plugin-service";
+import { default_native_fs } from "../../native/native-fs";
 import { LLMClient } from "../llm/llm-client";
 import { PiModelCatalog } from "../llm/pi-model-catalog";
 import { ModelService } from "../model/model-service";
@@ -74,6 +76,7 @@ export interface BackendServicesOptions {
   publishEvent: (topic: string, payload: JsonRecord) => void; // 公开事件的传输方式归入口层选择。
   openOutputFolder: OutputFolderOpener; // GUI 专用副作用，CLI 注入空实现
   workerExecution: BackendWorkerExecution; // 入口层注入的 Backend worker 执行配置
+  pluginHostEntry?: string; // 已构建的插件宿主入口；缺省时插件目录仍可发现但不执行
 }
 
 /** GUI 扩展与共享业务服务必须引用同一组状态拥有者。 */
@@ -152,6 +155,7 @@ export class BackendServices {
   public readonly model: ModelService;
   public readonly batchTranslation: BatchTranslationService;
   public readonly logManager: LogManager;
+  public readonly formats: FormatPluginService;
   public readonly state: BackendServiceState;
 
   /**
@@ -172,6 +176,16 @@ export class BackendServices {
 
     this.app_setting_service = options.appSettingService;
     this.logManager = options.logManager;
+    this.formats = new FormatPluginService({
+      plugins_root: paths.get_format_plugin_root_dir(),
+      state_path: paths.get_format_plugin_state_path(),
+      host_entry: options.pluginHostEntry ?? "",
+      node_executable: process.execPath,
+      node_env: { ELECTRON_RUN_AS_NODE: "1" }, // 打包态用同一可执行文件运行宿主
+      hardening: true,
+      native_fs: default_native_fs,
+      log: (line) => this.logManager.warning(line),
+    });
     this.game_directory_operations = new GameDirectoryOperations(undefined, this.logManager);
     this.modelCatalog = new PiModelCatalog(paths, this.logManager);
     this.modelAuth = new ChatGPTAuthService(paths, this.runtime_gate, options.publishEvent);
@@ -297,6 +311,7 @@ export class BackendServices {
         undefined,
         this.logManager,
         this.game_prepare_worker.run,
+        this.formats,
       ),
       translationTransfer: new ProjectTranslationTransferService(
         options.database,
@@ -445,6 +460,7 @@ export class BackendServices {
       this.compute_worker_client.dispose(),
       this.pdf_worker.dispose(),
       this.game_prepare_worker.dispose(),
+      this.formats.dispose(),
     ]);
     for (const result of worker_results) {
       if (result.status === "rejected") {

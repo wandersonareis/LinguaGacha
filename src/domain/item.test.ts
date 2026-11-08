@@ -47,6 +47,11 @@ describe("条目数据契约", () => {
     }
   });
 
+  it("保留形状合法的未知格式身份，避免插件缺失时丢数据", () => {
+    expect(create_item({ file_type: "PLUGIN_FORMAT" }).file_type).toBe("PLUGIN_FORMAT");
+    expect(create_item({ file_type: "plugin-format" }).file_type).toBe("NONE");
+  });
+
   it("缺失字段由 Schema 诊断，存储字段别名只在公开边界转换", () => {
     const record = create_item({ id: 2, row: 4, name_dst: "姓名" });
     const { dst: _dst, ...incomplete } = record;
@@ -66,7 +71,7 @@ describe("条目数据契约", () => {
       id: 5,
       src: 123,
       name_src: "名",
-      file_type: "BROKEN",
+      file_type: "broken",
       file_path: "script.json",
       status: "BROKEN",
       row: 1.8,

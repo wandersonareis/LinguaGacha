@@ -107,6 +107,8 @@ const POST_PATHS = new Set([
   "/api/toolbox/translation-transfer/apply",
   "/api/settings/app",
   "/api/settings/update",
+  "/api/formats/catalog",
+  "/api/formats/set-enabled",
   "/api/settings/recent-projects/add",
   "/api/settings/recent-projects/remove",
   "/api/models/snapshot",

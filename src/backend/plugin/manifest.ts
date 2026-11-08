@@ -61,7 +61,9 @@ export function discover_plugins(
       );
       const entry_path = resolve_entry_path(directory, manifest, native_fs);
       seen_ids.add(manifest.id);
-      for (const extension of manifest.extensions) seen_extensions.add(extension);
+      if (manifest.detection !== "content") {
+        for (const extension of manifest.extensions) seen_extensions.add(extension);
+      }
       for (const file_type of manifest.file_types) seen_file_types.add(file_type);
       plugins.push({ directory, entry_path, manifest });
     } catch (error) {
@@ -84,7 +86,10 @@ function assert_manifest_contract(
     throw invalid_manifest("plugin_id_invalid", directory);
   }
   for (const extension of manifest.extensions) {
-    if (!PLUGIN_EXTENSION_PATTERN.test(extension) || seen_extensions.has(extension)) {
+    if (!PLUGIN_EXTENSION_PATTERN.test(extension)) {
+      throw invalid_manifest("plugin_extension_invalid", directory);
+    }
+    if (manifest.detection !== "content" && seen_extensions.has(extension)) {
       throw invalid_manifest("plugin_extension_invalid", directory);
     }
   }

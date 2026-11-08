@@ -44,6 +44,10 @@ export const ITEM_FILE_TYPES = [
   "FFX_PO",
   "GENERIC",
 ] as const;
+/** 内置格式身份；插件格式使用同形大写标识并随工程持久化。 */
+export type BuiltinItemFileType = (typeof ITEM_FILE_TYPES)[number];
+/** 格式身份只约束形状；未安装插件的旧工程仍保留原值，避免回写时丢失。 */
+export const ITEM_FILE_TYPE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/u;
 
 const ITEM_NAME_SCHEMA = Type.Union([Type.String(), Type.Null()]);
 /** 条目形状共用业务字段，身份和行号由各自边界补充。 */
@@ -54,7 +58,7 @@ const ITEM_BUSINESS_SCHEMA = Type.Object({
   name_dst: ITEM_NAME_SCHEMA, // 角色姓名译文。
   extra_field: JSON_VALUE_SCHEMA, // 随条目持久化的格式私有扩展数据。
   tag: Type.String(), // 格式标签或资产内部定位信息。
-  file_type: Type.Enum(ITEM_FILE_TYPES), // 解析来源格式，决定导出处理器。
+  file_type: Type.String({ pattern: ITEM_FILE_TYPE_PATTERN.source }), // 解析来源格式，决定导出处理器；插件格式同样持久化
   file_path: Type.String(), // 工程内相对路径，对应原始资产。
   status: Type.Enum(ITEM_STATUSES), // 条目处理状态，用于统计和译文生成。
   skip_internal_filter: Type.Boolean(), // 本条目是否跳过规则和语言过滤。
@@ -99,7 +103,6 @@ export type ItemManualStatus = (typeof ITEM_MANUAL_STATUSES)[number];
 export type ItemFileType = Item["file_type"];
 const ITEM_STATUS_SET = new Set<ItemStatus>(ITEM_STATUSES);
 const ITEM_MANUAL_STATUS_SET = new Set<ItemManualStatus>(ITEM_MANUAL_STATUSES);
-const ITEM_FILE_TYPE_SET = new Set<ItemFileType>(ITEM_FILE_TYPES);
 const PROJECT_ITEM_PUBLIC_VALIDATOR = Compile(PROJECT_ITEM_PUBLIC_SCHEMA); // 复用编译结果，避免逐条解释格式私有数据。
 const DEFAULT_ITEM: Omit<Item, "id"> = {
   src: "",
@@ -168,7 +171,7 @@ export function is_item_manual_status(value: unknown): value is ItemManualStatus
 
 // 文件格式只表示解析来源，不能用它替代文本规则语义
 export function is_item_file_type(value: unknown): value is ItemFileType {
-  return ITEM_FILE_TYPE_SET.has(value as ItemFileType);
+  return typeof value === "string" && ITEM_FILE_TYPE_PATTERN.test(value);
 }
 
 // 完整公开 DTO 必须携带全部持久字段。缺失字段由迁移补齐。

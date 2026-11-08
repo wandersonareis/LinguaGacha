@@ -1,4 +1,5 @@
 import type { AppLanguage } from "../../domain/app-language";
+import path from "node:path";
 import { AgentExecutionRuntime } from "../agent/execution/runtime";
 import { AgentPersonalityService } from "../agent/agent-personality-service";
 import { AgentSkillsService } from "../agent/agent-skills-service";
@@ -111,6 +112,10 @@ export class GuiBackendBootstrap {
         pdfHost: this.options.pdfHost,
         workspaceRuntimeDirectory: this.options.workspaceRuntimeDirectory,
         workerExecution: this.options.workerExecution,
+        pluginHostEntry: path.join(
+          path.dirname(this.options.workspaceRuntimeDirectory),
+          "plugin-host.mjs",
+        ),
       });
       this.services = services;
       const images = new AgentImageService(this.options.imageHost);

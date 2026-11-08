@@ -40,6 +40,7 @@ export async function build_workspace_resources({ root, output, manifest }) {
     "runtime/bootstrap": "src/backend/agent/workspace/runtime/bootstrap.ts",
     "runtime/prepare": "src/backend/agent/node/prepare.ts",
     "runtime/pdf-worker": "src/backend/file/pdf/pdf-worker-entry.ts",
+    "plugin-host": "src/backend/plugin/host-entry.ts",
   };
   for (const definition of WORKSPACE_PACKAGES) {
     const { name, entries: package_entries } = definition;

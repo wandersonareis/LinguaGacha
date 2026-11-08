@@ -228,6 +228,16 @@ export function register_api_routes(context: ApiRouteContext): void {
   const settings = services.app.settings;
   context.postJson("/api/settings/app", () => settings.get_app_settings());
   context.postJson("/api/settings/update", (body) => services.app.updateSettings(body));
+  context.postJson("/api/formats/catalog", () => services.formats.list());
+  context.postJson("/api/formats/set-enabled", async (body) => {
+    const id = body["id"];
+    const enabled = body["enabled"];
+    if (typeof id !== "string" || typeof enabled !== "boolean") {
+      throw new AppError("request.validation_failed");
+    }
+    await services.formats.set_enabled(id, enabled);
+    return services.formats.list();
+  });
   context.postJson("/api/settings/recent-projects/add", (body) =>
     settings.add_recent_project(body),
   );

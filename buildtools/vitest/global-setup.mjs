@@ -1,6 +1,8 @@
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { build } from "vite";
 import { build_resources } from "../resources/build.mjs";
 
 /** 每次测试运行独占资源目录，测试只读共享产物，修改部署内容的场景自行复制。 */
@@ -32,6 +34,28 @@ export default async function setup(project) {
       );
     }
     project.provide("workspaceRuntimeDirectory", workspace);
+    // 插件宿主只构建一次，测试文件共享同一产物，避免并行构建争用 CPU。
+    const plugin_host_entry = path.join(resources, "plugin-host.mjs");
+    await access(plugin_host_entry).catch(async () => {
+      await build({
+        configFile: false,
+        resolve: { conditions: ["node"], mainFields: ["module", "main"] },
+        publicDir: false,
+        build: {
+          target: "node24",
+          outDir: resources,
+          emptyOutDir: false,
+          minify: false,
+          lib: {
+            entry: { "plugin-host": path.join(root, "src/backend/plugin/host-entry.ts") },
+            formats: ["es"],
+            fileName: () => "plugin-host.mjs",
+          },
+          rolldownOptions: { platform: "node", external: [...builtinModules, /^node:/u] },
+        },
+      });
+    });
+    project.provide("pluginHostEntry", plugin_host_entry);
     return cleanup;
   } catch (error) {
     await cleanup();

@@ -1,4 +1,5 @@
 import { fork, type ChildProcess, type ForkOptions } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 
 import { default_native_fs, type NativeFs } from "../../native/native-fs";
@@ -52,10 +53,11 @@ export type PluginSupervisorOptions = Readonly<{
   entry_path: string; // 插件 ESM 入口
   host_entry: string; // 已构建的宿主入口，由 Node 直接执行
   node_executable: string; // Node 或 Electron 可执行文件
-  node_arguments?: readonly string[]; // 后续权限/内存参数
+  node_arguments?: readonly string[]; // 额外 Node 参数（权限、内存等）
   node_env?: Readonly<Record<string, string>>;
   target_language: string;
   timeout_ms?: number;
+  hardening?: boolean; // 启用权限模型与堆上限；默认关闭以兼容旧宿主
   native_fs?: NativeFs;
   log?: (line: string) => void;
 }>;
@@ -247,11 +249,23 @@ export class PluginSupervisor {
     const work_root = await this.ensure_work_root();
     const launch_options: ForkOptions & { windowsHide: boolean } = {
       execPath: this.options.node_executable,
-      execArgv: [...(this.options.node_arguments ?? [])],
-      cwd: path.dirname(this.options.entry_path),
+      execArgv: [
+        ...(this.options.node_arguments ?? []),
+        ...(this.options.hardening === true
+          ? [
+              "--permission", // 只放行宿主与插件所需路径；网络仍由外层环境约束
+              `--allow-fs-read=${to_child_path(this.options.host_entry)}`,
+              `--allow-fs-read=${to_child_path(path.dirname(this.options.entry_path))}`,
+              `--allow-fs-read=${work_root}`,
+              `--allow-fs-write=${work_root}`,
+              "--max-old-space-size=256",
+            ]
+          : []),
+      ],
+      cwd: to_child_path(path.dirname(this.options.entry_path)),
       env: this.build_env(work_root),
       stdio: ["ignore", "pipe", "pipe", "ipc"],
-      serialization: "advanced",
+      // 只传元数据与路径；V8 序列化在跨 Node 版本时不可靠，保持默认 JSON 通道。
       windowsHide: true,
     };
     const child = fork(this.options.host_entry, [], launch_options);
@@ -341,7 +355,10 @@ export class PluginSupervisor {
 
   private async ensure_work_root(): Promise<string> {
     if (this.work_root === null) {
-      this.work_root = await this.native_fs.make_temp_dir("lg-plugin-");
+      // 绝对前缀确保子进程 cwd 不同也能解析同一路径；权限模型按绝对路径放行。
+      this.work_root = to_child_path(
+        await this.native_fs.make_temp_dir(path.join(os.tmpdir(), "lg-plugin-")),
+      );
     }
     return this.work_root;
   }
@@ -374,6 +391,11 @@ function to_app_error(failure: PluginHostFailure): AppError {
   return new AppError(is_app_error_code(failure.code) ? failure.code : "file.parse_failed", {
     message: failure.message,
   });
+}
+
+/** Windows 扩展长度前缀只用于本进程 IO；传给子进程与权限模型时使用普通路径。 */
+function to_child_path(value: string): string {
+  return process.platform === "win32" && value.startsWith("\\\\?\\") ? value.slice(4) : value;
 }
 
 /** 等待子进程真正退出，避免 Windows 上工作目录仍被占用。 */

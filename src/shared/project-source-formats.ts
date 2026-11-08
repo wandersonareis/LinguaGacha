@@ -235,8 +235,62 @@ export const PROJECT_SOURCE_FORMATS = [
 /** 支持格式目录的稳定跨层身份。 */
 export type ProjectSourceFormatId = (typeof PROJECT_SOURCE_FORMATS)[number]["id"];
 
-/** 各互斥格式的文件命中数。 */
-export type ProjectSourceFormatHitCounts = Record<ProjectSourceFormatId, number>;
+/** 运行时目录条目：内置项带 i18n 键，插件项带原始显示文本。 */
+export type FormatCatalogEntry = Readonly<{
+  source_kind: "file" | "game";
+  id: string;
+  file_type?: GameFileType;
+  support_status: "supported" | "deprecated" | "internal";
+  detection?: "extension" | "content";
+  extension: string;
+  extensions: readonly string[];
+  title_key?: LocaleKey;
+  description_keys?: readonly LocaleKey[];
+  title?: string;
+  description?: string;
+  plugin_id?: string;
+}>;
+
+/** 内置目录只读快照，解析、发现与界面共用同一结构。 */
+export const BUILTIN_FORMAT_CATALOG: readonly FormatCatalogEntry[] = PROJECT_SOURCE_FORMATS.map(
+  (format): FormatCatalogEntry => ({
+    source_kind: format.source_kind,
+    id: format.id,
+    ...("file_type" in format ? { file_type: format.file_type } : {}),
+    support_status: format.support_status,
+    ...("detection" in format ? { detection: format.detection } : {}),
+    extension: format.extension,
+    extensions: [format.extension],
+    title_key: format.title_key,
+    description_keys: format.description_keys,
+  }),
+);
+
+/** 各互斥格式的文件命中数；插件与内置格式共用同一映射。 */
+export type ProjectSourceFormatHitCounts = Record<string, number>;
+
+/** 插件元信息由 API 原样交付界面，名称与描述不经 i18n 词典。 */
+export type FormatPluginInfo = Readonly<{
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  api_version: number;
+  extensions: readonly string[];
+  file_types: readonly string[];
+  detection: "extension" | "content";
+  enabled: boolean;
+}>;
+
+/** 未通过校验的插件目录只保留可读诊断。 */
+export type FormatPluginDiagnostic = Readonly<{ directory: string; message: string }>;
+
+/** 格式目录与插件启停的共享快照。 */
+export type FormatPluginCatalog = Readonly<{
+  formats: readonly FormatCatalogEntry[];
+  plugins: readonly FormatPluginInfo[];
+  diagnostics: readonly FormatPluginDiagnostic[];
+}>;
 
 /** 新建与追加导入在写入前需要用户确认的来源事实。 */
 export type SourceConfirmations = {

@@ -27,7 +27,7 @@ import type { PDFExecution } from "./pdf/pdf-worker";
 import { PDFFormat } from "./pdf/pdf-format";
 import path from "node:path";
 
-import { type Item, type ItemFileType, type ItemStatus } from "../../domain/item";
+import { type Item, type ItemFileType, type ItemStatus, create_item } from "../../domain/item";
 import { ASSFormat } from "./subtitle/ass-ssa-format";
 import { KVJSONFormat } from "./kvjson/kvjson-format";
 import { MDV2Format } from "./markdown/md-v2-format";
@@ -45,6 +45,9 @@ import { TXTFormat } from "./txt/txt-format";
 import { XLSXFormat } from "./xlsx/xlsx-format";
 import { EPUBFormat } from "./epub/epub-format";
 import { FFXFormat } from "./ffx/ffx-format";
+import { FormatPluginService } from "../plugin/format-plugin-service";
+import type { DiscoveredPlugin } from "../plugin/manifest";
+import type { PluginItem } from "../plugin/protocol";
 import { NativeFs, default_native_fs } from "../../native/native-fs";
 import {
   type FileFormatReadResult,
@@ -53,7 +56,8 @@ import {
   type ProjectSourceFileEntry,
 } from "./file-format-types";
 import {
-  PROJECT_SOURCE_FORMATS,
+  BUILTIN_FORMAT_CATALOG,
+  type FormatCatalogEntry,
   type ProjectSourceFormatHitCounts,
   type ProjectSourceFileSummary,
   type SourceConfirmations,
@@ -74,6 +78,20 @@ export function read_source_confirmations(
   };
 }
 
+/** 插件只接收公开字段；工程身份与状态留在核心。 */
+function to_plugin_item(item: Item): PluginItem {
+  return {
+    src: item.src,
+    dst: item.dst,
+    name_src: item.name_src,
+    name_dst: item.name_dst,
+    extra_field: item.extra_field,
+    tag: item.tag,
+    row: item.row,
+    file_type: item.file_type,
+  };
+}
+
 /** 文件格式门面负责来源准备，并按固定配置分发解析和写回。 */
 export class FileFormatService {
   /** 文件重置由格式决定翻译资格，工程服务不解释私有定位。 */
@@ -83,6 +101,9 @@ export class FileFormatService {
   }
 
   private readonly native_fs: NativeFs; // 文件发现与字幕写入复用的磁盘入口
+  private readonly target_language: string; // 插件宿主与内置格式共用的项目目标语言
+  private readonly formats: readonly FormatCatalogEntry[]; // 内置 + 已启用插件的生效目录
+  private readonly file_formats: readonly FormatCatalogEntry[]; // 来源发现只消费文件级条目
   // 格式处理器随服务实例固定，解析与写回始终复用同一组配置。
   private readonly generic = new GenericFormat();
   private readonly txt: TXTFormat;
@@ -109,8 +130,12 @@ export class FileFormatService {
     private readonly pdf_execution: PDFExecution,
     native_fs: NativeFs = default_native_fs,
     private readonly game_prepare_execution?: GamePrepareExecution,
+    private readonly plugin_service?: FormatPluginService,
   ) {
     this.native_fs = native_fs;
+    this.target_language = config.target_language;
+    this.formats = plugin_service?.catalog() ?? BUILTIN_FORMAT_CATALOG;
+    this.file_formats = this.formats.filter((format) => format.source_kind === "file");
     this.games = Object.fromEntries(
       Object.entries(GAME_ENGINES).map(([type, engine]) => [
         type,
@@ -147,6 +172,9 @@ export class FileFormatService {
         file_type,
         ...(await this.games[file_type].read_from_stream(content, rel_path, signal)),
       };
+    // 插件先于内置分发：已保存身份直接命中，新来源先内容识别再按独占扩展名命中。
+    const plugin = await this.plugin_for_asset(file_type, rel_path, content);
+    if (plugin !== undefined) return await this.read_plugin_asset(plugin, rel_path, content);
     const by_extension: Record<string, string> = {
       ".txt": "TXT",
       ".md": "MD_V2",
@@ -250,6 +278,40 @@ export class FileFormatService {
     return result.file_type.startsWith("FFX_") ? { kind: "items", ...result } : null;
   }
 
+  /** 已保存身份优先；新来源按内容识别顺序尝试，再回退独占扩展名。 */
+  private async plugin_for_asset(
+    file_type: string | undefined,
+    rel_path: string,
+    content: Uint8Array,
+  ): Promise<DiscoveredPlugin | undefined> {
+    const service = this.plugin_service;
+    if (service === undefined) return undefined;
+    if (file_type !== undefined) return service.plugin_for_file_type(file_type);
+    const extension = path.extname(rel_path).toLowerCase();
+    for (const plugin of service.content_plugins(extension)) {
+      const supervisor = service.supervisor(plugin, this.target_language);
+      if (await supervisor.detect(rel_path, content)) return plugin;
+    }
+    return service.plugin_for_extension(extension);
+  }
+
+  /** 插件条目补齐工程身份；文件级格式身份由插件清单校验后决定。 */
+  private async read_plugin_asset(
+    plugin: DiscoveredPlugin,
+    rel_path: string,
+    content: Uint8Array,
+  ): Promise<FileFormatReadResult> {
+    const service = this.plugin_service!;
+    const result = await service.supervisor(plugin, this.target_language).read(rel_path, content);
+    return {
+      kind: "items",
+      file_type: result.file_type,
+      items: result.items.map((item) =>
+        create_item({ ...item, file_type: result.file_type, file_path: rel_path }),
+      ),
+    };
+  }
+
   /** 来源发现到原稿固化共用一次占用，内部发现与准备不重复申请。 */
   public async with_source_directories<T>(
     source_paths: readonly string[],
@@ -274,7 +336,7 @@ export class FileFormatService {
     orders?: readonly GodotPackOrder[],
   ): Promise<DiscoveredSource[]> {
     return this.apply_godot_orders(
-      await discover_sources(source_paths, this.native_fs, signal),
+      await discover_sources(source_paths, this.native_fs, signal, this.file_formats),
       orders,
     );
   }
@@ -287,7 +349,7 @@ export class FileFormatService {
   ): Promise<DiscoveredSource[]> {
     const result: DiscoveredSource[] = [];
     for (const entry of entries) {
-      const resolved = await discover_source(entry.source_path, this.native_fs, signal);
+      const resolved = await discover_source(entry.source_path, this.native_fs, signal, this.file_formats);
       const file_type = entry.file_type ?? resolved.file_type;
       // 游戏容器只能由同一引擎的来源形成，身份不符时来源无法交付目标资产的原稿。
       const mismatched =
@@ -526,21 +588,21 @@ export class FileFormatService {
     );
     const source_files = entries.filter((entry) => entry.source.kind !== "failure");
     const format_hit_counts = Object.fromEntries(
-      PROJECT_SOURCE_FORMATS.map((format) => [format.id, 0]),
+      this.formats.map((format) => [format.id, 0]),
     ) as ProjectSourceFormatHitCounts;
 
     for (const source_file of source_files) {
       const source = source_file.source;
       const format_id =
         source.kind === "game"
-          ? PROJECT_SOURCE_FORMATS.find(
+          ? this.formats.find(
               (format) => format.source_kind === "game" && format.file_type === source.file_type,
             )?.id
           : source.kind === "file"
             ? source.format
             : undefined;
       if (format_id !== undefined) {
-        format_hit_counts[format_id] += 1;
+        format_hit_counts[format_id] = (format_hit_counts[format_id] ?? 0) + 1;
       }
     }
 
@@ -595,8 +657,54 @@ export class FileFormatService {
     await this.renpy_rpy.write_to_path(items, paths, asset_reader);
     await this.epub.write_to_path(items, paths, asset_reader);
     await this.ffx.write_to_path(items, paths, asset_reader);
+    await this.write_plugins(items, context);
     if (failures.length === 1) throw failures[0];
     if (failures.length) throw new AggregateError(failures, "Game assets could not be exported");
+  }
+
+  /** 插件写回与内置格式共用目标目录，失败进入统一聚合错误。 */
+  private async write_plugins(
+    items: Item[],
+    context: FileFormatServiceWriteContext,
+  ): Promise<void> {
+    const service = this.plugin_service;
+    if (service === undefined) return;
+    const grouped = new Map<DiscoveredPlugin, Map<string, Item[]>>();
+    for (const item of items) {
+      const plugin = service.plugin_for_file_type(item.file_type);
+      if (plugin === undefined) continue;
+      const files = grouped.get(plugin) ?? new Map<string, Item[]>();
+      const group = files.get(item.file_path) ?? [];
+      group.push(item);
+      files.set(item.file_path, group);
+      grouped.set(plugin, files);
+    }
+    for (const [plugin, files] of grouped) {
+      const supervisor = service.supervisor(plugin, this.target_language);
+      for (const [rel_path, group] of files) {
+        const asset = await context.asset_reader(rel_path);
+        if (asset === null) {
+          throw new AppError("file.not_found", { public_details: { file: rel_path } });
+        }
+        const written = await supervisor.write(
+          rel_path,
+          group.map(to_plugin_item),
+          new Uint8Array(asset),
+        );
+        if (written.translated !== undefined) {
+          await this.native_fs.write_file(
+            path.join(context.paths.translated_path, rel_path),
+            written.translated,
+          );
+        }
+        if (written.bilingual !== undefined) {
+          await this.native_fs.write_file(
+            path.join(context.paths.bilingual_path, rel_path),
+            written.bilingual,
+          );
+        }
+      }
+    }
   }
 
   /** 资产集合驱动 MESSAGEJSON 导出，零条目文件也完整保留源结构。 */

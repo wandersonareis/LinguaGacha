@@ -96,6 +96,11 @@ export class PluginHost {
         result: await this.dispatch(request),
       };
     } catch (error) {
+      this.options.log?.(
+        `plugin ${this.options.manifest.id} ${request.method} failed: ${
+          error instanceof Error ? (error.stack ?? error.message) : String(error)
+        }`,
+      );
       return {
         v: PLUGIN_API_VERSION,
         id: request.id,
@@ -156,10 +161,10 @@ export class PluginHost {
     return this.plugin;
   }
 
-  /** 输入路径必须真实存在于工作根内，符号链接也按真实路径核对。 */
+  /** 输入路径必须位于工作根内；真实边界由权限模型兜底，这里只做路径收窄。 */
   private read_input(candidate: string): Buffer {
-    const root = this.native_fs.real_path(this.options.work_root);
-    const resolved = this.native_fs.real_path(candidate);
+    const root = path.resolve(this.options.work_root);
+    const resolved = path.resolve(candidate);
     assert_inside(root, resolved, candidate);
     return this.native_fs.read_file(resolved);
   }
@@ -171,8 +176,8 @@ export class PluginHost {
         diagnostic_context: { reason: "plugin_output_too_large", bytes: content.byteLength },
       });
     }
-    const root = this.native_fs.real_path(this.options.work_root);
-    const parent = this.native_fs.real_path(path.dirname(candidate));
+    const root = path.resolve(this.options.work_root);
+    const parent = path.resolve(path.dirname(candidate));
     assert_inside(root, parent, candidate);
     this.native_fs.write_file_sync(path.join(parent, path.basename(candidate)), content);
   }

@@ -3,24 +3,35 @@ import { GAME_ASSET_EXTENSIONS } from "../../shared/project/project-asset-paths"
 import path from "node:path";
 import type { NativeFs } from "../../native/native-fs";
 import {
-  PROJECT_SOURCE_FORMATS,
-  type ProjectSourceFormatId,
+  BUILTIN_FORMAT_CATALOG,
+  type FormatCatalogEntry,
 } from "../../shared/project-source-formats";
 import type { ProjectSourceFileEntry } from "./file-format-types";
 import { GAME_ENGINES, type GameSource } from "./shared/game/engines";
 
 export type SourceIdentity =
-  | Readonly<{ kind: "file"; format: ProjectSourceFormatId | undefined }>
+  | Readonly<{ kind: "file"; format: string | undefined }>
   | GameSource
   | Readonly<{ kind: "failure"; error: unknown }>;
 export type DiscoveredSource = ProjectSourceFileEntry & Readonly<{ source: SourceIdentity }>;
-// 目录发现只按扩展名建立来源身份。共享扩展名的 FFX JSON/XLSX 由内容识别决定实际处理器。
-const FORMATS = new Map<string, ProjectSourceFormatId>(
-  PROJECT_SOURCE_FORMATS.filter(
-    (format) =>
-      format.source_kind === "file" && (!("detection" in format) || format.detection !== "content"),
-  ).map((format) => [format.extension, format.id]),
+/** 目录发现只消费独占扩展名；内容识别格式由解析阶段决定实际处理器。 */
+type SourceFormatEntry = Pick<
+  FormatCatalogEntry,
+  "id" | "extension" | "extensions" | "detection" | "source_kind"
+>;
+const DEFAULT_FILE_FORMATS: readonly SourceFormatEntry[] = BUILTIN_FORMAT_CATALOG.filter(
+  (format) => format.source_kind === "file",
 );
+
+/** 同一扩展名只允许一个非内容识别格式；插件目录已在装配前检查冲突。 */
+function build_format_map(formats: readonly SourceFormatEntry[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const format of formats) {
+    if (format.detection === "content") continue;
+    for (const extension of format.extensions) map.set(extension, format.id);
+  }
+  return map;
+}
 
 /** 显式选择检查候选祖先，递归扫描只检查当前目录，按保留名称停止下探。 */
 function find_managed_directory(
@@ -50,6 +61,7 @@ export async function discover_source(
   source_path: string,
   fs: NativeFs,
   signal?: AbortSignal,
+  formats: readonly SourceFormatEntry[] = DEFAULT_FILE_FORMATS,
 ): Promise<DiscoveredSource> {
   try {
     const managed = find_managed_directory(source_path, fs, signal, true);
@@ -63,14 +75,15 @@ export async function discover_source(
       source: { kind: "failure", error },
     };
   }
-  return read_source(source_path, fs, signal);
+  return read_source(source_path, fs, signal, build_format_map(formats));
 }
 
 /** 仅来源编排边界归集失败；取消和相互冲突的游戏入口终止整批。 */
 async function read_source(
   source_path: string,
   fs: NativeFs,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  formats: ReadonlyMap<string, string>,
 ): Promise<DiscoveredSource> {
   const rel_path = path.basename(source_path); // 识别失败时保留真实来源名称。
   try {
@@ -90,7 +103,7 @@ async function read_source(
     return {
       source_path,
       rel_path,
-      source: { kind: "file", format: FORMATS.get(path.extname(source_path).toLowerCase()) },
+      source: { kind: "file", format: formats.get(path.extname(source_path).toLowerCase()) },
     };
   } catch (error) {
     signal?.throwIfAborted();
@@ -119,9 +132,11 @@ export async function discover_sources(
   source_paths: readonly string[],
   fs: NativeFs,
   signal?: AbortSignal,
+  formats: readonly SourceFormatEntry[] = DEFAULT_FILE_FORMATS,
 ): Promise<DiscoveredSource[]> {
   const entries: DiscoveredSource[] = [],
     visited = new Set<string>();
+  const format_map = build_format_map(formats);
   /** 每个物理来源只探测一次，普通目录按稳定顺序展开。 */
   async function visit(source_path: string, source_root: string): Promise<void> {
     signal?.throwIfAborted();
@@ -144,7 +159,7 @@ export async function discover_sources(
     const key = fs.to_identity_path(source_path);
     if (visited.has(key)) return;
     visited.add(key);
-    const entry = await read_source(source_path, fs, signal);
+    const entry = await read_source(source_path, fs, signal, format_map);
     try {
       const directory = fs.exists(source_path) && fs.stat(source_path).isDirectory();
       // 坏 EXE 所在的普通容器目录仍展开兄弟来源；有游戏标志的坏目录整体报告失败。

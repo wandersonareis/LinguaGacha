@@ -41,6 +41,8 @@ function create_backend_services_options(): BackendServicesOptions {
       get_user_data_path: (name: string) => `E:/UserData/${name}`,
       get_user_data_dir: () => "E:/UserData",
       get_agent_workspace_root_dir: () => "E:/UserData/workspace",
+      get_format_plugin_root_dir: () => "E:/UserData/plugins",
+      get_format_plugin_state_path: () => "E:/UserData/plugins.json",
     },
     metadata: {
       build_linguagacha_user_agent: vi.fn(() => "LinguaGacha/Test"),

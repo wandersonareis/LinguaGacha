@@ -34,6 +34,7 @@ import type { PDFExecution } from "../file/pdf/pdf-worker";
 import type { JsonRecord, JsonValue, MutableJsonRecord } from "../../domain/json";
 import { ProjectDatabase, type ProjectAssetRecord } from "../database/database-operations";
 import { FileFormatService, read_source_confirmations } from "../file/file-format-service";
+import type { FormatPluginService } from "../plugin/format-plugin-service";
 import {
   SourceFileParsePipeline,
   type SourceFileParseResult,
@@ -127,6 +128,7 @@ export class ProjectContentService {
     native_fs: NativeFs = default_native_fs,
     log_manager: Pick<LogManager, "warning"> | null = null,
     private readonly game_prepare_execution?: GamePrepareExecution,
+    private readonly plugin_service?: FormatPluginService,
   ) {
     this.database = database;
     this.runtime_gate = runtime_gate;
@@ -903,6 +905,7 @@ export class ProjectContentService {
       this.pdf_execution,
       this.native_fs,
       this.game_prepare_execution,
+      this.plugin_service,
     );
   }
 
