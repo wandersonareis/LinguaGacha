@@ -4,6 +4,7 @@ import {
   collect_foreign_residue_fragments,
   has_translation_similarity_issue,
   is_translation_text_similar,
+  is_translation_text_similar_for_target,
 } from "./translation-quality-rules";
 
 describe("translation-quality-rules", () => {
@@ -74,6 +75,27 @@ describe("translation-quality-rules", () => {
     expect(is_translation_text_similar("abc", "abd")).toBe(false);
     expect(is_translation_text_similar("", "alpha")).toBe(false);
   });
+
+  it("保护段占位空白和标点不参与相似度字符集合", () => {
+    expect(is_translation_text_similar("   hello world   ", "   olá mundo   ")).toBe(false);
+    expect(is_translation_text_similar("hello, world!", "hello world")).toBe(true);
+  });
+
+  it.each([
+    ["EN", "PT", "Hello world", "Olá mundo", false],
+    ["EN", "PT", "Hello world", "Hello world", true],
+    ["EN", "PT", "Use elevator commands.", "Usar os comandos do elevador.", false],
+    ["EN", "PT", "Mascot", "Mascote", false],
+    ["EN", "PT", "Double Attack", "Double Attack", true],
+    ["JA", "ZH", "東京", "東京あ", true],
+  ] as const)(
+    "按目标语言选择相似度口径：%s -> %s，%s / %s",
+    (_source, target, src, dst, expected) => {
+      expect(is_translation_text_similar_for_target({ src, dst, targetLanguage: target })).toBe(
+        expected,
+      );
+    },
+  );
 
   it.each([
     ["日译中无非中文文字时不报告", "東京", "東京", "JA", "ZH", false],

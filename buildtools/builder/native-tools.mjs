@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Arch } from "builder-util";
 import { deploy_uv } from "./uv.mjs";
@@ -93,9 +93,16 @@ async function build_native_tool({ root, name, platform, arch, run, binary }) {
     throw new Error(`Unsupported native target: ${platform}-${arch}`);
   const cwd = path.join(root, "buildtools/builder", name);
   await mkdir(path.dirname(binary), { recursive: true });
+  // 部分安全软件会拦截名为 *.test.exe 的临时测试二进制；显式命名后编译并执行。
+  const test_directory = path.join(root, "build", "native-test");
+  await mkdir(test_directory, { recursive: true });
+  const test_binary = path.join(
+    test_directory,
+    `${name}-check-${process.pid}${process.platform === "win32" ? ".exe" : ""}`,
+  );
   try {
     // 测试固定使用宿主平台与架构，交叉构建只影响最终可执行文件。
-    await run("go", ["test", "./..."], {
+    await run("go", ["test", "-c", "-o", test_binary, "."], {
       cwd,
       env: {
         ...process.env,
@@ -105,6 +112,7 @@ async function build_native_tool({ root, name, platform, arch, run, binary }) {
       },
       stdio: "inherit",
     });
+    await run(test_binary, [], { cwd, stdio: "inherit" });
     await run(
       "go",
       [
@@ -126,6 +134,8 @@ async function build_native_tool({ root, name, platform, arch, run, binary }) {
     if (cause !== null && typeof cause === "object" && "code" in cause && cause.code === "ENOENT")
       throw new Error("Building native tools requires Go on PATH.", { cause });
     throw cause;
+  } finally {
+    await rm(test_binary, { force: true }).catch(() => undefined);
   }
   let info;
   try {

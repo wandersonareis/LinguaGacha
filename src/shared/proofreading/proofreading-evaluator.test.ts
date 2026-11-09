@@ -283,6 +283,48 @@ describe("proofreading-evaluator", () => {
     });
   });
 
+  it("保护段占位空白不抬高相似度", () => {
+    const quality = create_quality({
+      text_preserve: {
+        enabled: true,
+        mode: "custom",
+        revision: 1,
+        entries: [{ entry_id: "tag", src: "\\{[^}]+\\}" }],
+      },
+    });
+
+    const item = evaluate({
+      src: "{A}{B}{C}Hello world",
+      dst: "{A}{B}{C}Olá mundo",
+      sourceLanguage: "EN",
+      targetLanguage: "PT",
+      quality,
+    });
+
+    expect(item.warnings.map((warning) => warning.code)).not.toContain("SIMILARITY");
+  });
+
+  it("真正未翻译的正文仍报告相似度", () => {
+    const quality = create_quality({
+      text_preserve: {
+        enabled: true,
+        mode: "custom",
+        revision: 1,
+        entries: [{ entry_id: "tag", src: "\\{[^}]+\\}" }],
+      },
+    });
+
+    const item = evaluate({
+      src: "{A}{B}{C}Hello world",
+      dst: "{A}{B}{C}Hello world",
+      sourceLanguage: "EN",
+      targetLanguage: "PT",
+      quality,
+    });
+
+    expect(item.warnings.map((warning) => warning.code)).toContain("SIMILARITY");
+  });
+
   it("姓名字段中的术语缺失会触发术语警告", () => {
     const quality = create_quality({
       glossary: {

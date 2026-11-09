@@ -44,6 +44,32 @@
 
 工具返回后，按回执记录本轮成功、重试耗尽和未结束数量。失败条目不自动重试，也不因剩余 `NONE` 再次调用工具。
 
+回执只表示结构通过和已提交，不代表译文质量。每次调用后执行「批量翻译复检」，不得把 `succeeded` 当作质量通过。
+
+#### 批量翻译复检
+
+复检脚本随本技能包提供。用 `read_skill` 读取 `scripts/recheck.mjs` 取得 `base_url`，在 `workspace_run` 中导入：
+
+```js
+const { audit } = await import(new URL("scripts/recheck.mjs", base_url).href);
+const summary = await audit(ws.contract, { item_ids: [/* 本批 item_id */] });
+```
+
+脚本按项目 `text_preserve` 规则比较本批 `src` 与 `dst`：
+
+- 同类保护段内容不一致、数量和类型对应时，写入自动修复。
+- 保护段数量或类型不一致、`{K}` 残留、`name_src`/`name_dst` 不一致、`{TEXT_NEWLINE}` 数量不一致时列为待处理。
+- 汇总 proofreading 的 `TEXT_PRESERVE`、`GLOSSARY`、`LINE_COUNT_MISMATCH` 等警告。
+- `text_preserve_detail.structure` 优先处理；`text_preserve_detail.newline` 表示仅换行结构差异。
+
+按回执处理：
+
+1. `auto_repairable > 0`：用 `workspace_apply` 提交自动修复，再重新复检，直到自动修复为 0。
+2. `flagged`、`warning_counts` 或 `name_inconsistencies` 非空：逐条核对，按「Agent 翻译」修正或重译；无法确定的记为未决。
+3. 复检完成后才进入「翻译后检查」和交付。
+4. 需要完整列表时读取 `report_path`；报告位于 `work/recheck/`。
+5. 复检通过后，按文件抽样 10–20 条，核对语气、代词、称谓和术语；语义问题按「Agent 翻译」修正。
+
 ### Agent 翻译
 
 逐个业务单元执行：
@@ -84,6 +110,8 @@
 交付时按来源说明候选、`显示`、`保留` 和 `未决` 的数量，以及没有调查到的范围。
 
 ## 5. 翻译后检查
+
+批量翻译的目标先完成「批量翻译复检」；以下检查对复检后的译文执行。
 
 1. 注音检查：用脚本从本次目标的 `item.src` 中筛选候选。
    - 常见写法包括 `\r[正文,注音]`、`\rb[正文,注音]`、`[r_注音][ch_正文]`、`[ch_正文]`、`(正文/注音)`、`[正文/注音]`、`|正文[注音]`、`<ruby = 注音>正文</ruby>`、`<ruby>正文<rt>注音</rt></ruby>` 和 `[ruby text=注音]`。
