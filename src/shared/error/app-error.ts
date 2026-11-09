@@ -94,6 +94,11 @@ export const APP_ERROR_DEFINITIONS = {
     status: 423,
     severity: "expected",
   },
+  "runtime.instance_in_use": {
+    message: "Another LinguaGacha instance is using this app data folder.",
+    status: 423,
+    severity: "expected",
+  },
   "model.not_found": {
     message: "The model configuration does not exist.",
     status: 404,
