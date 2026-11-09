@@ -36,6 +36,7 @@ function setup(loaded = true, line = 0) {
     status: "done",
     progress: normalize_batch_translation_progress({ processed_line: line }),
   }));
+  const snapshots = { create: vi.fn(async () => null) };
   const service = new BatchTranslationService(
     { run } as unknown as BatchTranslationRunner,
     runtime,
@@ -47,11 +48,18 @@ function setup(loaded = true, line = 0) {
       }),
     },
     { readBlock: () => DEFAULT_PROJECT_LANGUAGE_SETTINGS },
+    snapshots,
   );
-  return { service, runtime, gate, run };
+  return { service, runtime, gate, run, snapshots };
 }
 
 describe("批量翻译服务", () => {
+  it("启动前保存工程快照", async () => {
+    const { service, runtime, snapshots } = setup();
+    await service.start({ operation: "translate", mode: "new", scope: { kind: "all" } });
+    expect(snapshots.create).toHaveBeenCalledWith("E:/Project/test.lg", "before-batch-translation");
+    await runtime.dispose();
+  });
   it("普通入口拒绝已删除的失败参数", async () => {
     const { service, runtime, run } = setup();
     await expect(

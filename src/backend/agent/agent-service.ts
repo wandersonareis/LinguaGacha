@@ -45,7 +45,7 @@ import type { AppPathService } from "../app/app-path-service";
 import type { AppSettingService } from "../app/app-setting-service";
 import type { LogManager } from "../log/log-manager";
 import type { ProjectSessionState } from "../project/project-session-state";
-import type { RuntimeOperationGate } from "../runtime-operation-gate";
+import type { RuntimeLease, RuntimeOperationGate } from "../runtime-operation-gate";
 import { AgentDecisionCoordinator } from "./agent-decision";
 import { register_agent_model, resolve_agent_batch_translation_model } from "./agent-model";
 import type { ChatGPTAuthService } from "../auth/chatgpt-auth-service";
@@ -56,6 +56,8 @@ import { create_agent_ask_user_tool } from "./tools/ask-user";
 import { AgentInputQueue } from "./agent-input-queue";
 import type { AgentWorkspacePort } from "./workspace/service";
 import { create_agent_workspace_run_tool } from "./tools/workspace-run";
+import { create_agent_project_snapshot_tool } from "./tools/project-snapshot";
+import type { ProjectSnapshotService } from "../project/project-snapshot-service";
 import { format_agent_skills_for_system_prompt } from "./agent-skills";
 import {
   insert_agent_personality,
@@ -94,6 +96,8 @@ type AgentServiceOptions = {
   sessionState: ProjectSessionState;
   runtimeGate: RuntimeOperationGate;
   workspace: AgentWorkspacePort;
+  snapshots?: Pick<ProjectSnapshotService, "describe" | "create_for_round" | "create">;
+  restoreSnapshot?: (file: string, lease: RuntimeLease) => Promise<JsonRecord>;
   images: Pick<AgentImageService, "prepare" | "clear">;
   logManager: Pick<LogManager, "append">;
   publish: (topic: string, payload: JsonRecord) => void;
@@ -132,6 +136,8 @@ export class AgentService {
   private readonly session_state: ProjectSessionState;
   private readonly runtime_gate: RuntimeOperationGate;
   private readonly workspace: AgentWorkspacePort;
+  private readonly snapshots: AgentServiceOptions["snapshots"] | null;
+  private readonly restore_snapshot: AgentServiceOptions["restoreSnapshot"] | null;
   private readonly images: AgentServiceOptions["images"];
   private readonly log_manager: AgentServiceOptions["logManager"];
   private readonly publish: AgentServiceOptions["publish"];
@@ -176,6 +182,8 @@ export class AgentService {
     this.session_state = options.sessionState;
     this.runtime_gate = options.runtimeGate;
     this.workspace = options.workspace;
+    this.snapshots = options.snapshots ?? null;
+    this.restore_snapshot = options.restoreSnapshot ?? null;
     this.images = options.images;
     this.log_manager = options.logManager;
     this.publish = options.publish;
@@ -1050,6 +1058,13 @@ export class AgentService {
           const execution = this.require_execution();
           const entry_id = this.require_chat().view.tool_entry_id(callId)!; // 工具入口已等待投影完成
           try {
+            const project_path = this.session_state.require_loaded_project_path();
+            // 脚本可以写工程文件；每轮第一次执行前先保存可恢复的工程状态。
+            await this.snapshots?.create_for_round(
+              project_path,
+              execution.roundId,
+              "before-workspace-run",
+            );
             return await this.workspace.run(
               {
                 script,
@@ -1087,6 +1102,44 @@ export class AgentService {
       create_agent_workspace_apply_tool({
         workspace: this.workspace,
         approval: this.workspace_approval_port(),
+      }),
+      create_agent_project_snapshot_tool({
+        project: {
+          list: async () => {
+            const execution = this.require_execution();
+            this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+            const snapshots = this.snapshots;
+            if (snapshots === null || snapshots === undefined)
+              throw new AppErrors.AppError("runtime.internal_invariant", {
+                diagnostic_context: { reason: "project_snapshot_service_missing" },
+              });
+            return await snapshots.describe(this.session_state.require_loaded_project_path());
+          },
+          create: async () => {
+            const execution = this.require_execution();
+            this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+            const snapshots = this.snapshots;
+            if (snapshots === null || snapshots === undefined)
+              throw new AppErrors.AppError("runtime.internal_invariant", {
+                diagnostic_context: { reason: "project_snapshot_service_missing" },
+              });
+            return await snapshots.create(
+              this.session_state.require_loaded_project_path(),
+              "manual",
+            );
+          },
+          restore: async (file, signal) => {
+            const execution = this.require_execution();
+            signal?.throwIfAborted();
+            this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+            const restore_snapshot = this.restore_snapshot;
+            if (restore_snapshot === null || restore_snapshot === undefined)
+              throw new AppErrors.AppError("runtime.internal_invariant", {
+                diagnostic_context: { reason: "project_snapshot_restore_missing" },
+              });
+            return await restore_snapshot(file, execution.lease);
+          },
+        },
       }),
       create_agent_read_skill_tool(() => this.skills.get_current()),
     ];

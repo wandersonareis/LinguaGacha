@@ -40,6 +40,7 @@ import type {
   ProjectDataSectionRevisions,
   ProjectWriteResult,
 } from "../../shared/project-event";
+import { PROJECT_DATA_SECTIONS } from "../../shared/project-event";
 import * as AppErrors from "../../shared/error";
 import { apply_project_item_field_patch } from "../../shared/project/project-item-update";
 import {
@@ -62,6 +63,7 @@ import {
   type ProjectCommittedChange,
   type ProjectCommittedChangeHandler,
 } from "./project-committed-change";
+import { ProjectDataReader } from "./project-data-reader";
 import {
   resolve_agent_workspace_writes,
   has_agent_workspace_applied_changes,
@@ -164,6 +166,26 @@ export class ProjectWriteStore {
     this.database = database;
     this.apply_committed_change = apply_committed_change;
     this.project_change_publisher = project_change_publisher;
+  }
+
+  /** 快照恢复整工程替换：缓存与公开事件按完整 section 重建，不改变会话身份。 */
+  public async notify_project_restored(project_path: string): Promise<ProjectCommittedChange> {
+    const change = await this.database.read(project_path, (reader) => {
+      const snapshot = new ProjectDataReader(reader).read_snapshot(project_path);
+      return build_project_committed_change(
+        reader,
+        {
+          projectPath: project_path,
+          source: "project_snapshot_restore",
+          updatedSections: [...PROJECT_DATA_SECTIONS],
+          qualityStatisticsScope: "all",
+        },
+        snapshot.meta,
+      );
+    });
+    await this.apply_committed_change(change);
+    this.project_change_publisher?.(change);
+    return change;
   }
 
   /**

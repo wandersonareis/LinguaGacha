@@ -28,7 +28,12 @@ import { random_id } from "../../../shared/utils/identifier";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import { is_json_record, read_json_integer, type JsonRecord } from "../../../domain/json";
+import {
+  is_json_record,
+  read_json_integer,
+  type JsonRecord,
+  type JsonValue,
+} from "../../../domain/json";
 import {
   TRANSLATION_PROMPT,
   PROMPT_KINDS,
@@ -56,6 +61,7 @@ import type { LogManager } from "../../log/log-manager";
 import type { ProjectDatabase } from "../../database/database-operations";
 import type { ProofreadingQueryService } from "../../proofreading/proofreading-query-service";
 import type { ProjectSessionState } from "../../project/project-session-state";
+import type { ProjectSnapshotService } from "../../project/project-snapshot-service";
 import type { ProjectWriteStore } from "../../project/project-write-store";
 import {
   project_agent_workspace_item,
@@ -216,6 +222,7 @@ export class AgentWorkspaceService {
       };
       files: Pick<ProjectContentService, "inspect_sources" | "apply_file_changes">;
       writeStore: Pick<ProjectWriteStore, "apply_agent_workspace_changes">;
+      snapshots?: Pick<ProjectSnapshotService, "create" | "describe">;
       logManager: Pick<LogManager, "warning">;
       run: AgentWorkspaceRunPort;
       generation: Pick<
@@ -542,9 +549,25 @@ export class AgentWorkspaceService {
       ? await this.options.database.read_pdf_documents(project_path)
       : [];
     const knowledge = await this.options.knowledge.read(project_path);
+    let backups: Awaited<ReturnType<ProjectSnapshotService["describe"]>> | null = null;
+    try {
+      backups =
+        this.options.snapshots === undefined
+          ? null
+          : await this.options.snapshots.describe(project_path);
+    } catch (error) {
+      // 快照信息失败不阻断工作区；Agent 仍可通过 project_snapshot 工具重试。
+      this.options.logManager.warning("工程快照摘要读取失败。", {
+        source: "project_snapshot",
+        context: { operation: "describe_for_workspace" },
+        error,
+        targets: { window: false },
+      });
+    }
     const project_meta: JsonRecord = {
       knowledge: { fp: knowledge.fp },
       ...language,
+      ...(backups === null ? {} : { backups: backups as unknown as JsonValue }),
       counts: {
         files: snapshot_files.length,
         items: current_items.length,
@@ -870,14 +893,15 @@ export class AgentWorkspaceService {
 
       let write_ack: AgentWorkspaceStoreResult;
       try {
-        write_ack = await this.options.runtimeGate.run_agent_project_write(
-          async () =>
-            await this.options.writeStore.apply_agent_workspace_changes({
-              projectPath: active.projectPath,
-              source: "agent_workspace_apply",
-              batch: preview.candidates,
-            }),
-        );
+        write_ack = await this.options.runtimeGate.run_agent_project_write(async () => {
+          // 风险写入前先备份工程；失败则本批次不提交，避免再次出现不可逆的翻译损失。
+          await this.options.snapshots?.create(active.projectPath, "before-agent-apply");
+          return await this.options.writeStore.apply_agent_workspace_changes({
+            projectPath: active.projectPath,
+            source: "agent_workspace_apply",
+            batch: preview.candidates,
+          });
+        });
       } catch (error) {
         if (AppErrors.is_app_error(error) && error.code === "data.committed_sync_failed") {
           await this.clear_snapshot();

@@ -2,6 +2,8 @@ import { type JSX } from "react";
 import {
   CONTEXT_LINES_THRESHOLD_MIN,
   CONTEXT_LINES_THRESHOLD_MAX,
+  PROJECT_SNAPSHOT_LIMIT_MIN,
+  PROJECT_SNAPSHOT_LIMIT_MAX,
   TRANSLATION_SAVE_MODES,
   PROJECT_SAVE_MODES,
   is_project_save_mode,
@@ -76,6 +78,18 @@ export function FunctionSettingsPage(): JSX.Element {
           max={REQUEST_TIMEOUT_MAX}
           integer={false}
           on_commit={function_settings_state.update_request_timeout}
+        />
+
+        <NumberSettingRow
+          title={t("function_settings_page.fields.project_snapshot_limit.title")}
+          description={t("function_settings_page.fields.project_snapshot_limit.description")}
+          invalid_message={t("function_settings_page.feedback.project_snapshot_limit_invalid")}
+          value={function_settings_state.snapshot.project_snapshot_limit}
+          pending={function_settings_state.pending_state.project_snapshot_limit}
+          min={PROJECT_SNAPSHOT_LIMIT_MIN}
+          max={PROJECT_SNAPSHOT_LIMIT_MAX}
+          integer={true}
+          on_commit={function_settings_state.update_project_snapshot_limit}
         />
 
         <SaveLocationRow

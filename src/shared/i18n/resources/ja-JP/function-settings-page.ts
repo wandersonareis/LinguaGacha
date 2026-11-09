@@ -18,6 +18,11 @@ export const ja_jp_function_settings_page = {
       description:
         "モデルの応答を待つ最長時間（秒）です。時間内に応答がない場合、タスクは失敗となります",
     },
+    project_snapshot_limit: {
+      title: "プロジェクトの自動スナップショット数",
+      description:
+        "Agent の変更、スクリプト、バッチ翻訳、プロジェクト移行の前にプロジェクトのスナップショットを自動保存し、壊滅的なスクリプト誤編集から翻訳を復元できるようにします。0 で無効になります",
+    },
     project_save_mode: {
       title: "プロジェクトファイルの保存先",
       description: "新しいプロジェクトを作成するときのプロジェクトファイルの保存先を設定します",
@@ -47,6 +52,7 @@ export const ja_jp_function_settings_page = {
     following_lines_threshold_invalid:
       "参照する後文の項目数は 0 から 9999999 の整数で入力してください …",
     request_timeout_invalid: "タイムアウトには有効な範囲の数値を入力してください …",
+    project_snapshot_limit_invalid: "自動スナップショット数は 0 から 20 の整数で入力してください …",
     pick_directory_failed: "フォルダーを選択できませんでした。固定の保存先を選び直してください …",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_function_settings_page>;

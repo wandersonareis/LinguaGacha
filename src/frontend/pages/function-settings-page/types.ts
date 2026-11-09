@@ -16,6 +16,7 @@ export type FunctionSettingsSnapshot = Pick<
   | "translation_fixed_path"
   | "output_folder_open_on_finish"
   | "request_timeout"
+  | "project_snapshot_limit"
 >;
 
 /** 保存模式的协议值到本地化文案映射。 */
@@ -45,6 +46,7 @@ export function build_function_settings_snapshot(
     translation_fixed_path: settings_snapshot.translation_fixed_path,
     output_folder_open_on_finish: settings_snapshot.output_folder_open_on_finish,
     request_timeout: settings_snapshot.request_timeout,
+    project_snapshot_limit: settings_snapshot.project_snapshot_limit,
     preceding_lines_threshold: settings_snapshot.preceding_lines_threshold,
     following_lines_threshold: settings_snapshot.following_lines_threshold,
   };

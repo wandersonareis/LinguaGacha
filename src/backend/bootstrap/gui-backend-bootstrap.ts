@@ -147,6 +147,7 @@ export class GuiBackendBootstrap {
         generation: services.files.translationGeneration,
         logManager: resources.logManager,
         run: runner.run.bind(runner),
+        snapshots: services.projectSnapshots,
         pdfHost: this.options.pdfHost,
         openDirectory: this.options.openDirectory,
         pickSavePath: this.options.pickSavePath,
@@ -171,6 +172,9 @@ export class GuiBackendBootstrap {
         sessionState: services.state.session,
         runtimeGate: services.state.runtimeGate,
         workspace,
+        snapshots: services.projectSnapshots,
+        restoreSnapshot: (file, lease) =>
+          services.project.lifecycle.restore_snapshot({ file }, lease),
         logManager: resources.logManager,
         publish: (topic, payload) => event_stream.publish(topic, payload),
       });

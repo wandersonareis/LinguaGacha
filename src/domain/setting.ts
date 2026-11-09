@@ -36,6 +36,10 @@ export function is_translation_save_mode(value: unknown): value is TranslationSa
 /** 应用级工程写入审批偏好，跨对话、工程和应用重启保留。 */
 export const AGENT_APPROVAL_MODES = ["manual", "auto"] as const;
 export type AgentApprovalMode = (typeof AGENT_APPROVAL_MODES)[number];
+/** 自动工程快照保留数量；0 关闭，避免大工程无限占用磁盘。 */
+export const PROJECT_SNAPSHOT_LIMIT_MIN = 0;
+export const PROJECT_SNAPSHOT_LIMIT_MAX = 20;
+export const PROJECT_SNAPSHOT_LIMIT_DEFAULT = 5;
 export const RECENT_PROJECT_SETTING_SCHEMA = Type.Object({
   path: Type.String(), // 最近工程路径。
   name: Type.String(), // 从路径生成的完整文件名，包含扩展名。
@@ -48,6 +52,10 @@ export const SETTING_SNAPSHOT_SCHEMA = Type.Object(
     app_language: Type.Enum(APP_LANGUAGE_DEFINITIONS.map(({ code }) => code)), // 界面与日志文案的应用语言。
     project_save_mode: Type.Enum(PROJECT_SAVE_MODES), // 新建工程的保存位置策略。
     project_fixed_path: Type.String(), // 固定保存模式使用的工程目录。
+    project_snapshot_limit: Type.Integer({
+      minimum: PROJECT_SNAPSHOT_LIMIT_MIN,
+      maximum: PROJECT_SNAPSHOT_LIMIT_MAX,
+    }), // 工程自动快照保留数量，0 关闭。
     translation_save_mode: Type.Enum(TRANSLATION_SAVE_MODES), // GUI 译文生成的保存位置策略。
     translation_fixed_path: Type.String(), // 译文固定模式使用的输出父目录。
     output_folder_open_on_finish: Type.Boolean(), // 译文生成成功后是否打开输出目录。
@@ -84,6 +92,7 @@ export const DEFAULT_SETTING: SettingSnapshot & JsonRecord = {
   app_language: "ZH",
   project_save_mode: "MANUAL",
   project_fixed_path: "",
+  project_snapshot_limit: PROJECT_SNAPSHOT_LIMIT_DEFAULT,
   translation_save_mode: "PROJECT",
   translation_fixed_path: "",
   output_folder_open_on_finish: false,
@@ -231,6 +240,9 @@ export class Setting {
     if (key === "project_save_mode") {
       return Setting.normalize_project_save_mode(value);
     }
+    if (key === "project_snapshot_limit") {
+      return normalize_project_snapshot_limit(value);
+    }
     if (key === "translation_save_mode") {
       return is_translation_save_mode(value) ? value : "PROJECT";
     }
@@ -277,6 +289,15 @@ export function is_agent_approval_mode(value: unknown): value is AgentApprovalMo
 /** 旧配置缺失或存储值无效时使用手动审批。 */
 export function normalize_agent_approval_mode(value: unknown): AgentApprovalMode {
   return is_agent_approval_mode(value) ? value : "manual";
+}
+
+/** 快照数量限制必须落在可配置区间内；损坏值回退默认值。 */
+export function normalize_project_snapshot_limit(value: unknown): number {
+  const number_value = normalize_number_setting(value, PROJECT_SNAPSHOT_LIMIT_DEFAULT);
+  return Math.min(
+    PROJECT_SNAPSHOT_LIMIT_MAX,
+    Math.max(PROJECT_SNAPSHOT_LIMIT_MIN, Math.trunc(number_value)),
+  );
 }
 
 /**

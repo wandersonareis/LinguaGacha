@@ -67,9 +67,10 @@ import {
   ProjectDefaultPresetReader,
   type ProjectDefaultPresetInput,
 } from "./project-default-preset-reader";
-import type { RuntimeOperationGate } from "../runtime-operation-gate";
+import type { RuntimeLease, RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectSessionState } from "./project-session-state";
 import { ProjectFileLock, resolve_project_file_identity } from "./project-file-lock";
+import type { ProjectSnapshotService } from "./project-snapshot-service";
 import type { ProjectWriteStore } from "./project-write-store";
 import {
   resolve_project_prompt_storage,
@@ -125,6 +126,7 @@ export class ProjectLifecycleService {
     private readonly pdf_execution: PDFExecution,
     native_fs: NativeFs = default_native_fs,
     private readonly game_prepare_execution?: GamePrepareExecution,
+    private readonly snapshots?: ProjectSnapshotService,
   ) {
     this.database = database;
     this.runtime_gate = runtime_gate;
@@ -175,6 +177,12 @@ export class ProjectLifecycleService {
       : await this.acquire_project_lock(project_path);
     let committed = false; // 包含连接释放在内的提交后步骤都只能要求恢复。
     try {
+      if (
+        this.snapshots !== undefined &&
+        (await this.database.project_requires_migration(project_path))
+      ) {
+        await this.snapshots.create(project_path, "before-project-migration");
+      }
       await this.database.prepare(project_path, body["confirmed_target_app_version"]);
       // 打开期迁移只生成 operation，和 updated_at 一起提交后才暴露 loaded 状态
       const migration_writes = await build_project_open_writes({
@@ -632,6 +640,48 @@ export class ProjectLifecycleService {
     } finally {
       await this.release_project_lock();
     }
+  }
+
+  /** 恢复只覆盖工程数据表，保留当前 Agent 对话；Agent 工具与 UI 共用同一入口。 */
+  public async restore_snapshot(body: JsonRecord, agentLease?: RuntimeLease): Promise<JsonRecord> {
+    const operation = async (): Promise<JsonRecord> => {
+      const project_path = this.session_state.require_loaded_project_path();
+      const snapshots = this.snapshots;
+      if (snapshots === undefined) {
+        throw new AppErrors.AppError("runtime.internal_invariant", {
+          diagnostic_context: { reason: "project_snapshot_service_missing" },
+        });
+      }
+      const { snapshot, file_path } = snapshots.resolve(project_path, body["file"]);
+      if (!snapshots.is_compatible(snapshot)) {
+        throw new AppErrors.AppError("project.snapshot_incompatible");
+      }
+      const safety = await snapshots.create(project_path, "before-restore");
+      await this.database.restore_project_tables(project_path, file_path);
+      await this.database.transaction(project_path, (writer) => {
+        writer.bump_section_revisions(project_path, ["files", "items"]);
+        writer.set_meta(project_path, "updated_at", this.build_timestamp());
+      });
+      let change;
+      try {
+        change = await this.write_store.notify_project_restored(project_path);
+      } catch (cause) {
+        throw new AppErrors.AppError("data.committed_sync_failed", {
+          cause,
+          public_details: { committed: true, action: "reload_project" },
+          diagnostic_context: { operation: "restore_snapshot_after_commit" },
+        });
+      }
+      return {
+        restored: snapshot.file,
+        safety_snapshot: safety?.file ?? null,
+        project: { path: project_path, loaded: true },
+        section_revisions: change.sectionRevisions,
+      };
+    };
+    return agentLease === undefined
+      ? await this.runtime_gate.run_project_write(operation)
+      : await this.runtime_gate.run_agent_project_write(operation);
   }
 
   /** 同一路径 reload 复用现有锁，避免自己与自己的另一把锁冲突。 */

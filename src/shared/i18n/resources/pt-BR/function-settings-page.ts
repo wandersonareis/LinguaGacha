@@ -19,6 +19,11 @@ export const pt_br_function_settings_page = {
       description:
         "Tempo máximo de espera por uma resposta do modelo, em segundos. A tarefa falha se nenhuma resposta for recebida a tempo.",
     },
+    project_snapshot_limit: {
+      title: "Snapshots automáticos do projeto",
+      description:
+        "Salva automaticamente um snapshot do projeto antes de edições do Agent, scripts, tradução em lote ou migrações, permitindo recuperar as traduções após um erro catastrófico de script. 0 desativa.",
+    },
     project_save_mode: {
       title: "Local de salvamento do projeto",
       description: "Define o local de salvamento dos arquivos de projeto ao criar um novo projeto",
@@ -50,6 +55,8 @@ export const pt_br_function_settings_page = {
       "A contagem de entradas de contexto posterior deve ser um número inteiro de 0 a 9999999 …",
     request_timeout_invalid:
       "O tempo limite de requisição deve ser um número dentro do intervalo válido …",
+    project_snapshot_limit_invalid:
+      "A quantidade de snapshots automáticos deve ser um número inteiro de 0 a 20 …",
     pick_directory_failed:
       "Falha na seleção da pasta. Escolha novamente a pasta fixa de salvamento …",
   },

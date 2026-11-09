@@ -18,6 +18,11 @@ export const ko_kr_function_settings_page = {
       description:
         "모델 응답을 기다리는 최대 시간(초)입니다. 시간 내에 응답이 없으면 작업을 실패로 처리합니다",
     },
+    project_snapshot_limit: {
+      title: "프로젝트 자동 스냅샷 수",
+      description:
+        "Agent 변경, 스크립트, 일괄 번역 또는 프로젝트 마이그레이션 전에 프로젝트 스냅샷을 자동으로 저장하여 치명적인 스크립트 오편집 후 번역을 복구할 수 있게 합니다. 0이면 비활성화됩니다",
+    },
     project_save_mode: {
       title: "프로젝트 파일 저장 위치",
       description: "새 프로젝트를 만들 때 프로젝트 파일을 저장할 위치를 설정합니다",
@@ -47,6 +52,7 @@ export const ko_kr_function_settings_page = {
     following_lines_threshold_invalid:
       "참고할 뒤따르는 문맥의 항목 수는 0에서 9999999 사이의 정수여야 합니다 …",
     request_timeout_invalid: "요청 제한 시간에 유효한 범위의 숫자를 입력해 주세요 …",
+    project_snapshot_limit_invalid: "자동 프로젝트 스냅샷 수는 0에서 20 사이의 정수여야 합니다 …",
     pick_directory_failed: "폴더를 선택하지 못했습니다. 지정 저장 폴더를 다시 선택해 주세요 …",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_function_settings_page>;

@@ -48,6 +48,7 @@ export async function run_cli_command(
       openOutputFolder: async () => undefined,
       workspaceRuntimeDirectory: app_resources.workspaceRuntimeDirectory,
       workerExecution: worker_execution,
+      enableProjectSnapshots: false,
     });
     await run_cli_job(
       services,

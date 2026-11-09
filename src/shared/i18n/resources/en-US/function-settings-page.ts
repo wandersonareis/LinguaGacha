@@ -19,6 +19,11 @@ export const en_us_function_settings_page = {
       description:
         "Maximum wait for a model reply, in seconds. The task fails if no reply arrives in time.",
     },
+    project_snapshot_limit: {
+      title: "Automatic project snapshots",
+      description:
+        "Saves project snapshots before Agent edits, scripts, batch translation, or migrations, so translations can be recovered after a catastrophic script mistake. 0 disables it.",
+    },
     project_save_mode: {
       title: "Project save location",
       description: "Set the save location for project files when creating a new project",
@@ -49,6 +54,8 @@ export const en_us_function_settings_page = {
     following_lines_threshold_invalid:
       "The following context entry count must be an integer from 0 to 9999999 …",
     request_timeout_invalid: "Request timeout must be a number within the valid range …",
+    project_snapshot_limit_invalid:
+      "The automatic project snapshot count must be an integer from 0 to 20 …",
     pick_directory_failed:
       "Directory selection failed. Please choose the fixed save directory again …",
   },

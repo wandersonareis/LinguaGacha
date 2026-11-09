@@ -1,5 +1,6 @@
 import {
   normalize_context_lines_threshold,
+  normalize_project_snapshot_limit,
   type ProjectSaveMode,
   type TranslationSaveMode,
 } from "@domain/setting";
@@ -22,6 +23,7 @@ const FUNCTION_SETTINGS_PENDING_FIELDS = [
   "translation_save_mode",
   "output_folder_open_on_finish",
   "request_timeout",
+  "project_snapshot_limit",
 ] as const;
 
 type UseFunctionSettingsStateResult = {
@@ -34,6 +36,7 @@ type UseFunctionSettingsStateResult = {
   update_preceding_lines_threshold: (next_value: number) => Promise<void>;
   update_following_lines_threshold: (next_value: number) => Promise<void>;
   update_request_timeout: (next_value: number) => Promise<void>;
+  update_project_snapshot_limit: (next_value: number) => Promise<void>;
 };
 
 /**
@@ -116,6 +119,18 @@ export function useFunctionSettingsState(): UseFunctionSettingsStateResult {
     [commit_update, snapshot.request_timeout],
   );
 
+  /** 快照数量在领域层收敛，0 表示关闭自动备份。 */
+  const update_project_snapshot_limit = useCallback(
+    async (next_value: number): Promise<void> => {
+      const normalized = normalize_project_snapshot_limit(next_value);
+      if (snapshot.project_snapshot_limit === normalized) return;
+      await commit_update("project_snapshot_limit", {
+        project_snapshot_limit: normalized,
+      });
+    },
+    [commit_update, snapshot.project_snapshot_limit],
+  );
+
   /** 前后文共用领域计数规则，各字段独立保存。 */
   const update_context_threshold = useCallback(
     async (
@@ -137,6 +152,7 @@ export function useFunctionSettingsState(): UseFunctionSettingsStateResult {
     update_translation_save_mode: (mode) => update_save_mode("translation_save_mode", mode),
     update_output_folder_open_on_finish,
     update_request_timeout,
+    update_project_snapshot_limit,
     update_preceding_lines_threshold: (value) =>
       update_context_threshold("preceding_lines_threshold", value),
     update_following_lines_threshold: (value) =>

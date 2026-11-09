@@ -19,16 +19,18 @@ type CacheLifecycleCall = { projectPath: string; snapshot?: ProjectDataSnapshot 
 type CacheLifecycleHandler = (call: CacheLifecycleCall) => void;
 import { DatabaseSync } from "node:sqlite";
 import { ProjectDatabase } from "../database/database-operations";
-import type { MutableJsonRecord } from "../../domain/json";
+import type { MutableJsonRecord, JsonValue } from "../../domain/json";
 import type { LogManager } from "../log/log-manager";
 import type { AppSettingService } from "../app/app-setting-service";
 import { AppPathService } from "../app/app-path-service";
 import { ProjectLifecycleService } from "./project-lifecycle-service";
+import { ProjectSnapshotService } from "./project-snapshot-service";
 import { ProjectContentService } from "./project-content-service";
 import { adapt_project_change } from "./project-write-event-adapter";
 import { RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectWriteStore } from "./project-write-store";
 import { create_item } from "../../domain/item";
+import { build_project_item_public_record } from "../../domain/item";
 import {
   DEFAULT_PROJECT_LANGUAGE_SETTINGS,
   type ProjectLanguageSettings,
@@ -365,6 +367,72 @@ describe("ProjectLifecycleService", () => {
       await first.load_project({ path: project_path });
       await first.close();
       await expect(second.load_project({ path: project_path })).resolves.toBeDefined();
+    } finally {
+      await database.close();
+    }
+  });
+
+  it("恢复快照只回滚工程数据，保留当前对话", async () => {
+    const root = create_temp_dir();
+    const project_path = path.join(root, "restore.lg");
+    const database = new ProjectDatabase("1.0.0");
+    await database.create_project(project_path, (writer) => {
+      writer.set_items(project_path, [
+        build_project_item_public_record(
+          create_item({
+            id: 1,
+            src: "Hello",
+            dst: "Old",
+            name_src: "",
+            name_dst: "",
+            file_path: "demo.txt",
+            row: 0,
+            status: "PROCESSED",
+          }),
+        ) as unknown as JsonValue,
+      ]);
+    });
+    const first_store = database.open_agent_store(project_path);
+    await first_store.create("chat-1");
+    await first_store.close();
+
+    const app_paths = new AppPathService({
+      appRoot: root,
+      builtinRoot: path.join(root, "builtin"),
+    });
+    const snapshots = new ProjectSnapshotService(
+      app_paths,
+      database,
+      { read_setting: () => ({ project_snapshot_limit: 5 }) },
+      { read_version_or_default: () => "1.0.0" },
+      { warning: vi.fn() },
+    );
+    const service = create_service({ app_root: root, database, snapshots });
+    try {
+      await service.load_project({ path: project_path });
+      const snapshot = await snapshots.create(project_path, "manual");
+      expect(snapshot).not.toBeNull();
+
+      const second_store = database.open_agent_store(project_path);
+      await second_store.create("chat-2");
+      await second_store.close();
+      await database.transaction(project_path, (writer) => {
+        writer.patch_item_translation_fields(project_path, [
+          { item_id: 1, next: { dst: "Broken", name_dst: "", status: "PROCESSED" } },
+        ]);
+      });
+
+      await expect(service.restore_snapshot({ file: snapshot!.file })).resolves.toMatchObject({
+        restored: snapshot!.file,
+        project: { path: project_path, loaded: true },
+      });
+      const items = await database.get_all_items(project_path);
+      expect(items[0]?.["dst"]).toBe("Old");
+      const meta = await database.get_all_meta(project_path);
+      expect(meta["active_chat"]).toBe("chat-2");
+      const restored_store = database.open_agent_store(project_path);
+      await expect(restored_store.read()).resolves.toMatchObject({ id: "chat-2" });
+      await restored_store.close();
     } finally {
       await database.close();
     }
@@ -1320,6 +1388,7 @@ describe("ProjectLifecycleService", () => {
     };
     project_event_handler?: CacheLifecycleHandler;
     task_busy?: boolean;
+    snapshots?: ProjectSnapshotService;
   }): ProjectLifecycleService {
     const app_root = options.app_root ?? create_temp_dir();
     const project_event_handler = options.project_event_handler ?? vi.fn();
@@ -1345,6 +1414,9 @@ describe("ProjectLifecycleService", () => {
       },
       new ProjectWriteStore(options.database, () => undefined, null),
       create_pdf_execution(),
+      undefined,
+      undefined,
+      options.snapshots,
     );
     services.push(service);
     return service;

@@ -10,6 +10,7 @@ import type {
 } from "./batch-translation-runtime";
 import type { RuntimeLease } from "../runtime-operation-gate";
 import type { AppSettingService } from "../app/app-setting-service";
+import type { ProjectSnapshotService } from "../project/project-snapshot-service";
 import { Model } from "../../domain/model";
 import { is_item_status } from "../../domain/item";
 import { build_project_execution_settings } from "../../domain/project-settings";
@@ -41,6 +42,7 @@ export class BatchTranslationService {
     private readonly session: ProjectSessionState,
     private readonly settings: Pick<AppSettingService, "read_setting">,
     private readonly languages: CacheReadPort["languages"], // 已提交的项目语言
+    private readonly snapshots?: Pick<ProjectSnapshotService, "create">,
   ) {}
   /** 转接共享运行态的快照订阅。 */
   public subscribe(listener: BatchTranslationSnapshotListener): () => void {
@@ -59,7 +61,8 @@ export class BatchTranslationService {
   public async start_current_project(
     command: BatchTranslationStartCommand,
   ): Promise<BatchTranslationRunHandle> {
-    this.session.require_loaded_project_path();
+    const project_path = this.session.require_loaded_project_path();
+    await this.snapshots?.create(project_path, "before-batch-translation");
     // Runner 在异步生命周期内使用独立命令，调用方后续修改不改变已预约范围。
     const run_command: BatchTranslationRunCommand = {
       operation: command.operation,
@@ -82,7 +85,7 @@ export class BatchTranslationService {
     model: Model,
     request: AgentBatchTranslationRequest,
   ): Promise<BatchTranslationResult> {
-    this.session.require_loaded_project_path();
+    const project_path = this.session.require_loaded_project_path();
     const { item_ids: ids, item_statuses: statuses } = request;
     if (
       Object.keys(request).some((key) => key !== "item_ids" && key !== "item_statuses") ||
@@ -106,6 +109,7 @@ export class BatchTranslationService {
       ...(item_statuses === undefined ? {} : { item_statuses }),
       mode: resolve_batch_translation_start_mode(await this.runtime.read_progress()),
     };
+    await this.snapshots?.create(project_path, "before-batch-translation");
     const handle = this.runtime.begin_under_agent(lease, signal, command.operation);
     await this.runtime.execute(handle, () =>
       this.runner.run(handle, command, this.read_run_context(model)),

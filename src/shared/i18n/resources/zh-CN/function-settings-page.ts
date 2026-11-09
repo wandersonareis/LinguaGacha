@@ -13,6 +13,11 @@ export const zh_cn_function_settings_page = {
       title: "请求超时时间",
       description: "发起请求时等待模型回复的最长时间（秒），超时仍未收到回复，则会判断为任务失败",
     },
+    project_snapshot_limit: {
+      title: "自动工程快照数量",
+      description:
+        "在 Agent 应用变更、运行脚本、批量翻译或工程迁移前自动保存工程快照，用于从灾难性的脚本误改中恢复翻译。0 表示关闭",
+    },
     project_save_mode: {
       title: "工程文件保存位置",
       description: "设置创建工程时工程文件的保存位置",
@@ -36,6 +41,7 @@ export const zh_cn_function_settings_page = {
     preceding_lines_threshold_invalid: "参考前文条目数必须填写为 0 至 9999999 的整数 …",
     following_lines_threshold_invalid: "参考后文条目数必须填写为 0 至 9999999 的整数 …",
     request_timeout_invalid: "请求超时时间必须填写为有效范围内的数字 …",
+    project_snapshot_limit_invalid: "自动工程快照数量必须填写为 0 至 20 的整数 …",
     pick_directory_failed: "目录选择失败 …",
   },
 } as const;

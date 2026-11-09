@@ -199,6 +199,29 @@ export const AGENT_WORKSPACE_PROJECT_META_SCHEMA = Type.Object(
       ),
       { description: "按工作区文件顺序排列" },
     ),
+    backups: Type.Optional(
+      Type.Object(
+        {
+          directory: Type.String({ description: "本工程自动快照目录" }),
+          limit: Type.Integer({ minimum: 0 }),
+          count: Type.Integer({ minimum: 0 }),
+          latest: Type.Union([
+            Type.Object(
+              {
+                file: Type.String(),
+                created_at: Type.String(),
+                reason: Type.String(),
+                app_version: Type.String(),
+                size: Type.Integer({ minimum: 0 }),
+              },
+              { additionalProperties: false },
+            ),
+            Type.Null(),
+          ]),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );

@@ -43,6 +43,7 @@ import {
 } from "../project/project-data-reader";
 import { RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectLifecycleService } from "../project/project-lifecycle-service";
+import { ProjectSnapshotService } from "../project/project-snapshot-service";
 import { ProjectSessionState } from "../project/project-session-state";
 import { ProjectSummaryService } from "../project/project-summary-service";
 import { ProjectTranslationTransferService } from "../project/project-translation-transfer-service";
@@ -77,6 +78,7 @@ export interface BackendServicesOptions {
   openOutputFolder: OutputFolderOpener; // GUI 专用副作用，CLI 注入空实现
   workerExecution: BackendWorkerExecution; // 入口层注入的 Backend worker 执行配置
   pluginHostEntry?: string; // 已构建的插件宿主入口；缺省时插件目录仍可发现但不执行
+  enableProjectSnapshots?: boolean; // CLI 临时工程不创建自动快照
 }
 
 /** GUI 扩展与共享业务服务必须引用同一组状态拥有者。 */
@@ -154,6 +156,7 @@ export class BackendServices {
   public readonly files: BackendFileServices;
   public readonly model: ModelService;
   public readonly batchTranslation: BatchTranslationService;
+  public readonly projectSnapshots: ProjectSnapshotService; // 工程自动快照与保留策略
   public readonly logManager: LogManager;
   public readonly formats: FormatPluginService;
   public readonly state: BackendServiceState;
@@ -235,6 +238,15 @@ export class BackendServices {
       publish_project_change,
       this.cache_manager,
     );
+    this.projectSnapshots = new ProjectSnapshotService(
+      paths,
+      options.database,
+      this.app_setting_service,
+      metadata,
+      this.logManager,
+      default_native_fs,
+      options.enableProjectSnapshots ?? true,
+    );
 
     this.task_runtime = new BatchTranslationRuntime(session_state, database, this.runtime_gate);
     const lifecycle = new ProjectLifecycleService(
@@ -250,6 +262,7 @@ export class BackendServices {
       this.pdf_worker.run,
       undefined,
       this.game_prepare_worker.run,
+      this.projectSnapshots,
     );
     this.work_unit_worker_pool = new TranslationWorkerPool({
       builtinRoot: paths.get_builtin_root(),
@@ -389,6 +402,7 @@ export class BackendServices {
       session_state,
       this.app_setting_service,
       this.cache_manager.languages,
+      this.projectSnapshots,
     );
     this.state = {
       session: session_state,

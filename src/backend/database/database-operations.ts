@@ -24,6 +24,16 @@ const SQLITE_AUTO_VACUUM_FULL = 1; // SQLite 的 FULL 物理回收模式。
 const SQLITE_BUSY_TIMEOUT_MS = 5000; // 版本查询与 WAL 配置均受等待上限约束。
 const SQLITE_WAL_SUFFIX = "-wal";
 const PROJECT_FILE_SUFFIXES = ["", SQLITE_WAL_SUFFIX, "-shm"] as const; // 替换和删除同时处理主文件、WAL 与共享索引。
+// 快照恢复只覆盖工程事实；agent_chats 与 SDK 表沿用当前会话，避免恢复时丢失正在进行的对话。
+const PROJECT_SNAPSHOT_TABLES = [
+  "knowledge",
+  "meta",
+  "assets",
+  "pdf_documents",
+  "pdf_pages",
+  "items",
+  "rules",
+] as const;
 /**
  * `write` 启用写入。`query` 在调用方确认前禁止写入。
  * `read_only` 关闭时不会合并 WAL，也不会清理自己创建的副文件。
@@ -119,6 +129,21 @@ export class ProjectDatabase {
       "query",
     );
   }
+  /** 迁移快照只针对确有版本升级的工程；更新版本的工程由 prepare 直接拒绝。 */
+  public async project_requires_migration(project_path: string): Promise<boolean> {
+    return await this.use_connection(
+      project_path,
+      async (record) => {
+        const target = read_project_file_version(record.db);
+        if (target === null) return true;
+        const current = parse_app_version(this.current_app_version)!;
+        return compare_app_version(target, current) < 0;
+      },
+      false,
+      "query",
+    );
+  }
+
   /** 概览查询共享工程队列，读取事务使多条 SQL 消费同一快照。 */
   public read_project_preview(project_path: string): Promise<ProjectPreview> {
     return this.use_connection(
@@ -196,6 +221,57 @@ export class ProjectDatabase {
       for (const suffix of PROJECT_FILE_SUFFIXES)
         this.native_fs.unlink(project_path + suffix, { force: true });
     });
+  }
+
+  /** 只恢复工程数据表，保留当前 Agent 对话和 SDK 表，避免恢复快照时丢失会话。 */
+  public restore_project_tables(project_path: string, snapshot_path: string): Promise<void> {
+    return this.use_connection(
+      project_path,
+      async (record) => {
+        record.db
+          .prepare("ATTACH DATABASE ? AS snapshot")
+          .run(this.native_fs.to_native_path(snapshot_path));
+        try {
+          const active_chat = record.db
+            .prepare("SELECT value FROM main.meta WHERE key = ?")
+            .get("active_chat");
+          record.db.exec("BEGIN IMMEDIATE");
+          try {
+            for (const table of PROJECT_SNAPSHOT_TABLES) {
+              record.db.exec(`DELETE FROM main.${table}`);
+              record.db.exec(`INSERT INTO main.${table} SELECT * FROM snapshot.${table}`);
+            }
+            // 当前对话身份属于会话事实，不能被旧快照中的 active_chat 覆盖。
+            if (active_chat !== undefined) {
+              record.db
+                .prepare("INSERT OR REPLACE INTO main.meta (key, value) VALUES (?, ?)")
+                .run("active_chat", String(active_chat["value"]));
+            }
+            record.db.exec("COMMIT");
+          } catch (error) {
+            try {
+              record.db.exec("ROLLBACK");
+            } catch {
+              // 回滚失败统一由 database_cleanup_error 保留原始原因。
+            }
+            throw error;
+          }
+        } catch (error) {
+          throw new AppErrors.AppError("project.snapshot_incompatible", {
+            cause: error,
+            diagnostic_context: { operation: "restore_project_tables" },
+          });
+        } finally {
+          try {
+            record.db.exec("DETACH DATABASE snapshot");
+          } catch {
+            // 连接关闭时会自动分离；这里只做尽力清理。
+          }
+        }
+      },
+      true,
+      "write",
+    );
   }
   /** 排他创建文件，失败时按提交状态决定是否删除本次新文件。 */
   public async create_project(

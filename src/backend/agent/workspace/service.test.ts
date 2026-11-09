@@ -150,6 +150,20 @@ describe("AgentWorkspaceService", () => {
     expect(fixture.write_store).toHaveBeenCalledOnce();
   });
 
+  it("workspace_apply 提交前保存工程快照", async () => {
+    const fixture = await create_fixture(temp_dir);
+    await run_workspace(fixture);
+    write_rows(fixture.active_path(), AGENT_WORKSPACE_CHANGE_PATHS.items.updates, [
+      { item_id: 1, fp: item_fp(fixture.active_path(), 1), dst: "译文" },
+    ]);
+
+    await expect(fixture.service.apply_workspace()).resolves.toMatchObject({ status: "applied" });
+    expect(fixture.snapshots.create).toHaveBeenCalledWith(
+      fixture.snapshot.projectPath,
+      "before-agent-apply",
+    );
+  });
+
   it("绝对输入路径原样交给导入记录，工作目录输入不记录", async () => {
     const fixture = await create_fixture(temp_dir);
     const absolute = path.join(temp_dir, "game");
@@ -1669,6 +1683,15 @@ async function create_fixture(temp_dir: string, native_fs?: NativeFs) {
       },
     }),
   );
+  const snapshots = {
+    create: vi.fn(async () => null),
+    describe: vi.fn(async () => ({
+      directory: "",
+      limit: 0,
+      latest: null,
+      count: 0,
+    })),
+  };
   const service = new AgentWorkspaceService({
     generation: {
       read_output_paths: () => {
@@ -1702,6 +1725,7 @@ async function create_fixture(temp_dir: string, native_fs?: NativeFs) {
     },
     knowledge: { read: async () => project_knowledge_file(knowledge.stored, "zh-CN") },
     writeStore: { apply_agent_workspace_changes: write_store },
+    snapshots,
     logManager: { warning: vi.fn() },
     run,
     openDirectory: open_directory,
@@ -1727,6 +1751,7 @@ async function create_fixture(temp_dir: string, native_fs?: NativeFs) {
     read_meta,
     inspect_sources,
     apply_file_changes,
+    snapshots,
     active_path: () =>
       fs.existsSync(path.join(workspace_root, AGENT_WORKSPACE_PATHS.contract))
         ? workspace_root

@@ -19,6 +19,11 @@ export const de_de_function_settings_page = {
       description:
         "Maximale Antwortzeit in Sekunden. Ohne Antwort innerhalb dieser Frist gilt die Aufgabe als fehlgeschlagen.",
     },
+    project_snapshot_limit: {
+      title: "Automatische Projekt-Snapshots",
+      description:
+        "Speichert vor Agent-Änderungen, Skripten, Batch-Übersetzungen oder Migrationen automatisch einen Projekt-Snapshot, damit Übersetzungen nach einem katastrophalen Skriptfehler wiederhergestellt werden können. 0 deaktiviert dies.",
+    },
     project_save_mode: {
       title: "Projekt-Speicherort",
       description:
@@ -52,6 +57,8 @@ export const de_de_function_settings_page = {
       "Die Anzahl nachfolgender Kontexteinträge muss eine ganze Zahl von 0 bis 9999999 sein …",
     request_timeout_invalid:
       "Das Anfrage-Timeout muss eine Zahl innerhalb des gültigen Bereichs sein …",
+    project_snapshot_limit_invalid:
+      "Die Anzahl automatischer Projekt-Snapshots muss eine ganze Zahl von 0 bis 20 sein …",
     pick_directory_failed:
       "Ordnerauswahl fehlgeschlagen. Bitte den festen Speicherordner erneut auswählen …",
   },

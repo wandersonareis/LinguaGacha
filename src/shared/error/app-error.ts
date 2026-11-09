@@ -84,6 +84,22 @@ export const APP_ERROR_DEFINITIONS = {
     status: 423,
     severity: "warning",
   },
+  "project.snapshot_failed": {
+    message:
+      "The project could not be backed up, so the operation was cancelled to protect your translations.",
+    status: 500,
+    severity: "fault",
+  },
+  "project.snapshot_not_found": {
+    message: "The selected project snapshot does not exist.",
+    status: 404,
+    severity: "expected",
+  },
+  "project.snapshot_incompatible": {
+    message: "The selected project snapshot is not compatible with this application version.",
+    status: 409,
+    severity: "expected",
+  },
   "project.path_conflict": {
     message: "The output project must differ from the source projects and the loaded project.",
     status: 409,
