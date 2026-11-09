@@ -472,6 +472,11 @@ export class BackendServices {
     } catch (error) {
       errors.push(error);
     }
+    try {
+      await this.project.lifecycle.close();
+    } catch (error) {
+      errors.push(error);
+    }
     if (errors.length > 0) {
       throw new AggregateError(errors, "Failed to close BackendServices resources.");
     }

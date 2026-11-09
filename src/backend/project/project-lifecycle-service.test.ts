@@ -64,6 +64,7 @@ describe("ProjectLifecycleService", () => {
     }
   });
   const cleanup_paths: string[] = []; // 生命周期测试会创建真实临时文件，统一登记清理避免污染用户工作区
+  const services: ProjectLifecycleService[] = []; // 用例结束前释放工程锁，避免临时目录删除后留下心跳。
 
   it("来源摘要按文件、目录和多路径给出默认工程名，根目录与空来源使用空名", async () => {
     const root = create_temp_dir();
@@ -303,9 +304,69 @@ describe("ProjectLifecycleService", () => {
     }
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.allSettled(services.splice(0).map((service) => service.close()));
     while (cleanup_paths.length > 0) {
       fs.rmSync(cleanup_paths.pop() ?? "", { force: true, recursive: true });
+    }
+  });
+
+  it("同一个 .lg 只允许一个生命周期实例打开，卸载后可重新打开", async () => {
+    const project_path = path.join(create_temp_dir(), "shared.lg");
+    const first_database = new ProjectDatabase("1.0.0");
+    await first_database.create_project(project_path);
+    const first = create_service({ database: first_database });
+    const second = create_service({ database: new ProjectDatabase("1.0.0") });
+    try {
+      await expect(first.load_project({ path: project_path })).resolves.toMatchObject({
+        project: { path: project_path, loaded: true },
+      });
+      await expect(second.load_project({ path: project_path })).rejects.toMatchObject({
+        code: "project.in_use",
+      });
+      await first.unload_project();
+      await expect(second.load_project({ path: project_path })).resolves.toMatchObject({
+        project: { path: project_path, loaded: true },
+      });
+    } finally {
+      await first_database.close();
+    }
+  });
+
+  it("切换工程释放旧锁并保留新锁，reload 不与自己冲突", async () => {
+    const root = create_temp_dir();
+    const first_path = path.join(root, "first.lg");
+    const second_path = path.join(root, "second.lg");
+    const database = new ProjectDatabase("1.0.0");
+    await database.create_project(first_path);
+    await database.create_project(second_path);
+    const service = create_service({ database });
+    const other = create_service({ database: new ProjectDatabase("1.0.0") });
+    try {
+      await service.load_project({ path: first_path });
+      await service.load_project({ path: first_path });
+      await service.load_project({ path: second_path });
+      await expect(other.load_project({ path: first_path })).resolves.toBeDefined();
+      await expect(other.load_project({ path: second_path })).rejects.toMatchObject({
+        code: "project.in_use",
+      });
+    } finally {
+      await database.close();
+    }
+  });
+
+  it("关闭后端释放工程锁", async () => {
+    const project_path = path.join(create_temp_dir(), "close.lg");
+    const database = new ProjectDatabase("1.0.0");
+    await database.create_project(project_path);
+    const first = create_service({ database });
+    const second = create_service({ database: new ProjectDatabase("1.0.0") });
+    try {
+      await first.load_project({ path: project_path });
+      await first.close();
+      await expect(second.load_project({ path: project_path })).resolves.toBeDefined();
+    } finally {
+      await database.close();
     }
   });
 
@@ -1263,7 +1324,7 @@ describe("ProjectLifecycleService", () => {
     const app_root = options.app_root ?? create_temp_dir();
     const project_event_handler = options.project_event_handler ?? vi.fn();
     let languages: ProjectLanguageSettings = DEFAULT_PROJECT_LANGUAGE_SETTINGS;
-    return new ProjectLifecycleService(
+    const service = new ProjectLifecycleService(
       new GameDirectoryOperations(),
       options.database,
       create_runtime_gate(options.task_busy ?? false),
@@ -1285,6 +1346,8 @@ describe("ProjectLifecycleService", () => {
       new ProjectWriteStore(options.database, () => undefined, null),
       create_pdf_execution(),
     );
+    services.push(service);
+    return service;
   }
 
   /** 用真实占用门禁验证生命周期命令的忙碌边界。 */

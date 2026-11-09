@@ -558,26 +558,6 @@ describe("GuiBackendBootstrap 集成", () => {
     }
   });
 
-  it("同一数据目录拒绝第二个 GUI Backend，关闭后释放独占", async () => {
-    using directory = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-bootstrap-instance-"));
-    const options = create_options(directory.path);
-    const first = new GuiBackendBootstrap(options);
-    const second = new GuiBackendBootstrap(options);
-    try {
-      await first.start();
-      await expect(second.start()).rejects.toMatchObject({ code: "runtime.instance_in_use" });
-    } finally {
-      await Promise.allSettled([first.stop(), second.stop()]);
-    }
-
-    const reopened = new GuiBackendBootstrap(options);
-    try {
-      await expect(reopened.start()).resolves.toBeDefined();
-    } finally {
-      await reopened.stop();
-    }
-  });
-
   it("多个关闭阶段失败仍释放监听器和网络入口，并汇总全部异常", async () => {
     using directory = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-bootstrap-cleanup-"));
     const original_fetch = globalThis.fetch;

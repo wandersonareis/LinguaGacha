@@ -74,6 +74,16 @@ export const APP_ERROR_DEFINITIONS = {
     status: 409,
     severity: "expected",
   },
+  "project.in_use": {
+    message: "This project is already open in another LinguaGacha instance.",
+    status: 423,
+    severity: "expected",
+  },
+  "project.lock_unavailable": {
+    message: "Unable to secure a lock for this project.",
+    status: 423,
+    severity: "warning",
+  },
   "project.path_conflict": {
     message: "The output project must differ from the source projects and the loaded project.",
     status: 409,
@@ -91,11 +101,6 @@ export const APP_ERROR_DEFINITIONS = {
   },
   "runtime.busy": {
     message: "The runtime is occupied by another operation.",
-    status: 423,
-    severity: "expected",
-  },
-  "runtime.instance_in_use": {
-    message: "Another LinguaGacha instance is using this app data folder.",
     status: 423,
     severity: "expected",
   },

@@ -69,6 +69,7 @@ import {
 } from "./project-default-preset-reader";
 import type { RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectSessionState } from "./project-session-state";
+import { ProjectFileLock, resolve_project_file_identity } from "./project-file-lock";
 import type { ProjectWriteStore } from "./project-write-store";
 import {
   resolve_project_prompt_storage,
@@ -106,6 +107,8 @@ export class ProjectLifecycleService {
 
   private readonly default_preset_reader: ProjectDefaultPresetReader; // 隔离默认预设文件读取和非阻断日志
 
+  private project_lock: ProjectFileLock | null = null; // 当前 loaded .lg 的跨实例独占。
+
   /**
    * 初始化项目生命周期依赖，保持公开路由层只负责装配
    */
@@ -115,7 +118,7 @@ export class ProjectLifecycleService {
     runtime_gate: RuntimeOperationGate,
     session_state: ProjectSessionState,
     app_setting_service: AppSettingService,
-    paths: AppPathService,
+    private readonly paths: AppPathService,
     log_manager: LogManager,
     cache: Pick<CacheManager, "installProject" | "clearProject" | "languages">,
     write_store: ProjectWriteStore,
@@ -167,6 +170,9 @@ export class ProjectLifecycleService {
    */
   private async load_project_under_lease(body: JsonRecord): Promise<JsonRecord> {
     const project_path = this.require_body_string(body, "path");
+    const next_lock = this.is_loaded_project(project_path)
+      ? null
+      : await this.acquire_project_lock(project_path);
     let committed = false; // 包含连接释放在内的提交后步骤都只能要求恢复。
     try {
       await this.database.prepare(project_path, body["confirmed_target_app_version"]);
@@ -188,11 +194,12 @@ export class ProjectLifecycleService {
         );
       });
       committed = true;
-      const response = await this.activate_project(project_path, opened.snapshot);
+      const response = await this.activate_project(project_path, opened.snapshot, next_lock);
       return opened.alignment === null
         ? response
         : { ...response, settings_alignment: opened.alignment as unknown as JsonValue };
     } catch (cause) {
+      await this.release_unadopted_lock(next_lock);
       if (AppErrors.is_app_error(cause) && cause.code === "data.committed_sync_failed") throw cause;
       if (!committed) throw cause;
       throw new AppErrors.AppError("data.committed_sync_failed", {
@@ -288,12 +295,15 @@ export class ProjectLifecycleService {
   private async activate_project(
     project_path: string,
     snapshot: ProjectDataSnapshot,
+    next_lock: ProjectFileLock | null,
   ): Promise<JsonRecord> {
     try {
       this.cache.installProject(project_path, snapshot);
+      await this.replace_project_lock(next_lock);
       await this.session_state.mark_loaded(project_path);
       return this.build_loaded_project_response(project_path, snapshot.languages);
     } catch (cause) {
+      await this.release_unadopted_lock(next_lock);
       if (AppErrors.is_app_error(cause) && cause.code === "data.committed_sync_failed") throw cause;
       throw new AppErrors.AppError("data.committed_sync_failed", {
         cause,
@@ -402,7 +412,8 @@ export class ProjectLifecycleService {
       });
 
       saved_assets = parsed_draft.files.length; // 激活失败仍由外层回执保留已经提交的资产数量。
-      const response = await this.activate_project(project_path, snapshot);
+      const next_lock = await this.acquire_project_lock(project_path);
+      const response = await this.activate_project(project_path, snapshot, next_lock);
       this.default_preset_reader.log_loaded_names(default_preset_input.loaded_names);
       return {
         ...response,
@@ -601,12 +612,84 @@ export class ProjectLifecycleService {
       } else {
         await this.session_state.clear();
       }
+      await this.release_project_lock();
       return {
         project: {
           path: "",
           loaded: false,
         },
       };
+    });
+  }
+
+  /** 关闭后端时先释放工程连接，再释放跨实例独占。 */
+  public async close(): Promise<void> {
+    const state = this.session_state.snapshot();
+    try {
+      if (state.loaded && state.projectPath !== "") {
+        await this.database.close_project(state.projectPath);
+      }
+    } finally {
+      await this.release_project_lock();
+    }
+  }
+
+  /** 同一路径 reload 复用现有锁，避免自己与自己的另一把锁冲突。 */
+  private is_loaded_project(project_path: string): boolean {
+    return (
+      this.project_lock !== null &&
+      this.project_lock.identity === resolve_project_file_identity(project_path, this.native_fs)
+    );
+  }
+
+  private acquire_project_lock(project_path: string): Promise<ProjectFileLock> {
+    return ProjectFileLock.acquire(project_path, {
+      data_root: this.paths.get_data_root(),
+      native_fs: this.native_fs,
+    });
+  }
+
+  /** 只释放尚未被激活接管的候选锁。 */
+  private async release_unadopted_lock(lock: ProjectFileLock | null): Promise<void> {
+    if (lock === null || this.project_lock === lock) return;
+    try {
+      await lock.release();
+    } catch (error) {
+      this.report_project_lock_warning("release_unadopted", error);
+    }
+  }
+
+  /** 新工程激活后替换当前锁，旧工程释放失败只记录诊断。 */
+  private async replace_project_lock(next_lock: ProjectFileLock | null): Promise<void> {
+    if (next_lock === null || next_lock === this.project_lock) return;
+    const previous = this.project_lock;
+    this.project_lock = next_lock;
+    if (previous === null) return;
+    try {
+      await previous.release();
+    } catch (error) {
+      this.report_project_lock_warning("release_previous", error);
+    }
+  }
+
+  /** 关闭会话时释放当前锁，残留锁在 stale 后自动失效。 */
+  private async release_project_lock(): Promise<void> {
+    const lock = this.project_lock;
+    this.project_lock = null;
+    if (lock === null) return;
+    try {
+      await lock.release();
+    } catch (error) {
+      this.report_project_lock_warning("release_current", error);
+    }
+  }
+
+  private report_project_lock_warning(operation: string, error: unknown): void {
+    this.log_manager.warning("工程锁释放失败。", {
+      source: "project_lock",
+      context: { operation },
+      error,
+      targets: { window: false },
     });
   }
 

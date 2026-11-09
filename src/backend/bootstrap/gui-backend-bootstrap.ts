@@ -11,8 +11,6 @@ import { AgentWorkspaceService } from "../agent/workspace/service";
 import { AgentWorkspaceRunner } from "../agent/workspace/runtime/runner";
 import { ApiGatewayServer } from "../api/api-gateway-server";
 import { ApiStreamHub } from "../api/api-stream-hub";
-import { AppPathService } from "../app/app-path-service";
-import { AppInstanceLock } from "../app/app-instance-lock";
 import { t_main_log } from "../log/log-text";
 import type { ProxyResolver } from "../network/proxy-route";
 import type { BackendWorkerExecution } from "../worker/worker-execution";
@@ -55,7 +53,6 @@ export class GuiBackendBootstrap {
   private execution: AgentExecutionRuntime | null = null; // Agent 停止后统一释放共享执行资源。
   private images: AgentImageService | null = null; // 关闭 Gateway 前取消模型图片准备，排空正在受理的发送请求
   private gateway: ApiGatewayServer | null = null;
-  private instance_lock: AppInstanceLock | null = null; // 数据根独占先于日志和工程连接建立。
   private start_promise: Promise<GuiBackendBootstrapStartResult> | null = null; // stop 等待在途启动后再释放资源
   private stop_promise: Promise<void> | null = null; // 并发 stop 共用一次清理，清理期间拒绝 start
 
@@ -100,11 +97,6 @@ export class GuiBackendBootstrap {
   private async start_runtime(): Promise<GuiBackendBootstrapStartResult> {
     this.state = "starting";
     try {
-      // 同一数据根的第二个 GUI 在写入日志或打开工程前失败，CLI 不受此锁影响。
-      const instance_lock = await AppInstanceLock.acquire(
-        new AppPathService(this.options).get_user_data_root_dir(),
-      );
-      this.instance_lock = instance_lock;
       const resources = await BackendResources.start(this.options);
       this.resources = resources;
       const event_stream = new ApiStreamHub();
@@ -286,10 +278,6 @@ export class GuiBackendBootstrap {
     const resources = this.resources;
     this.resources = null;
     await collect_failure(failures, async () => await resources?.dispose());
-
-    const instance_lock = this.instance_lock;
-    this.instance_lock = null;
-    await collect_failure(failures, async () => await instance_lock?.release());
     this.state = "stopped";
   }
 }
