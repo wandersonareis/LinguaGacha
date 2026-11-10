@@ -16,3 +16,14 @@
 .function-settings-page__save-location-row .setting-card-row__description {
   white-space: pre-line;
 }
+
+.function-settings-page__backup-directory {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  max-width: 448px;
+}
+
+.function-settings-page__backup-directory-input {
+  min-width: 224px;
+}

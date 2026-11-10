@@ -38,6 +38,7 @@ import {
   type AgentMessageInput,
   type AgentChatChange,
   type AgentChatSnapshot,
+  type AgentRestoreScope,
 } from "../../shared/agent";
 import * as AppErrors from "../../shared/error";
 import { format_i18n_message } from "../../shared/i18n";
@@ -82,7 +83,7 @@ type AgentServicePaths = Pick<
 >;
 
 type AgentServiceOptions = {
-  database: Pick<ProjectDatabase, "open_agent_store">;
+  database: Pick<ProjectDatabase, "open_agent_store" | "read_project_state">;
   auth?: ChatGPTAuthService;
   skills: Pick<AgentSkillsService, "get_current" | "subscribe" | "refresh">;
   catalog: PiModelCatalogReader;
@@ -96,8 +97,14 @@ type AgentServiceOptions = {
   sessionState: ProjectSessionState;
   runtimeGate: RuntimeOperationGate;
   workspace: AgentWorkspacePort;
-  snapshots?: Pick<ProjectSnapshotService, "describe" | "create_for_round" | "create">;
-  restoreSnapshot?: (file: string, lease: RuntimeLease) => Promise<JsonRecord>;
+  snapshots?: Pick<ProjectSnapshotService, "describe" | "create_for_run" | "create">;
+  restoreSnapshot?: (
+    file: string,
+    scope: AgentRestoreScope,
+    lease: RuntimeLease,
+  ) => Promise<JsonRecord>;
+  rollbackSnapshot?: (lease: RuntimeLease) => Promise<JsonRecord>;
+  restoreAnchorSnapshot?: (scope: AgentRestoreScope, lease: RuntimeLease) => Promise<JsonRecord>;
   images: Pick<AgentImageService, "prepare" | "clear">;
   logManager: Pick<LogManager, "append">;
   publish: (topic: string, payload: JsonRecord) => void;
@@ -138,6 +145,8 @@ export class AgentService {
   private readonly workspace: AgentWorkspacePort;
   private readonly snapshots: AgentServiceOptions["snapshots"] | null;
   private readonly restore_snapshot: AgentServiceOptions["restoreSnapshot"] | null;
+  private readonly rollback_snapshot: AgentServiceOptions["rollbackSnapshot"] | null;
+  private readonly restore_anchor_snapshot: AgentServiceOptions["restoreAnchorSnapshot"] | null;
   private readonly images: AgentServiceOptions["images"];
   private readonly log_manager: AgentServiceOptions["logManager"];
   private readonly publish: AgentServiceOptions["publish"];
@@ -184,6 +193,8 @@ export class AgentService {
     this.workspace = options.workspace;
     this.snapshots = options.snapshots ?? null;
     this.restore_snapshot = options.restoreSnapshot ?? null;
+    this.rollback_snapshot = options.rollbackSnapshot ?? null;
+    this.restore_anchor_snapshot = options.restoreAnchorSnapshot ?? null;
     this.images = options.images;
     this.log_manager = options.logManager;
     this.publish = options.publish;
@@ -1059,13 +1070,14 @@ export class AgentService {
           const entry_id = this.require_chat().view.tool_entry_id(callId)!; // 工具入口已等待投影完成
           try {
             const project_path = this.session_state.require_loaded_project_path();
-            // 脚本可以写工程文件；每轮第一次执行前先保存可恢复的工程状态。
-            await this.snapshots?.create_for_round(
+            const before = await this.database.read_project_state(project_path);
+            // 每个脚本前保存 full 预脚本点；同内容会去重，脚本可写 .lg 时这是最细恢复点。
+            const snapshot = await this.snapshots?.create_for_run(
               project_path,
-              execution.roundId,
+              execution.roundId ?? execution.lease.owner,
               "before-workspace-run",
             );
-            return await this.workspace.run(
+            const result = await this.workspace.run(
               {
                 script,
                 timeoutMs,
@@ -1091,6 +1103,12 @@ export class AgentService {
               },
               signal,
             );
+            const after = await this.database.read_project_state(project_path);
+            return {
+              ...result,
+              external_project_write: before.project_hash !== after.project_hash,
+              restore_point: snapshot?.file ?? null,
+            };
           } finally {
             // `sequential` 让整轮工具串行，观察又在 run 返回前停止，此时的运行输出只属于本次调用。
             this.run_output = null;
@@ -1102,6 +1120,7 @@ export class AgentService {
       create_agent_workspace_apply_tool({
         workspace: this.workspace,
         approval: this.workspace_approval_port(),
+        task_token: () => this.require_execution().roundId ?? "agent",
       }),
       create_agent_project_snapshot_tool({
         project: {
@@ -1128,7 +1147,29 @@ export class AgentService {
               "manual",
             );
           },
-          restore: async (file, signal) => {
+          rollback: async (signal) => {
+            const execution = this.require_execution();
+            signal?.throwIfAborted();
+            this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+            const rollback_snapshot = this.rollback_snapshot;
+            if (rollback_snapshot === null || rollback_snapshot === undefined)
+              throw new AppErrors.AppError("runtime.internal_invariant", {
+                diagnostic_context: { reason: "project_snapshot_rollback_missing" },
+              });
+            return await rollback_snapshot(execution.lease);
+          },
+          restoreAnchor: async (scope, signal) => {
+            const execution = this.require_execution();
+            signal?.throwIfAborted();
+            this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+            const restore_anchor = this.restore_anchor_snapshot;
+            if (restore_anchor === null || restore_anchor === undefined)
+              throw new AppErrors.AppError("runtime.internal_invariant", {
+                diagnostic_context: { reason: "project_snapshot_anchor_missing" },
+              });
+            return await restore_anchor(scope, execution.lease);
+          },
+          restore: async (file, scope, signal) => {
             const execution = this.require_execution();
             signal?.throwIfAborted();
             this.runtime_gate.assert_current_runtime(execution.lease, "agent");
@@ -1137,7 +1178,7 @@ export class AgentService {
               throw new AppErrors.AppError("runtime.internal_invariant", {
                 diagnostic_context: { reason: "project_snapshot_restore_missing" },
               });
-            return await restore_snapshot(file, execution.lease);
+            return await restore_snapshot(file, scope, execution.lease);
           },
         },
       }),

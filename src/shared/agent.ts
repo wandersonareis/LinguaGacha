@@ -55,10 +55,16 @@ export const AGENT_PENDING_WRITE_SUMMARY_FIELDS = Object.freeze([
   "prompts",
   "knowledge",
   "files",
+  "mass_change",
+  "same_dst",
+  "mass_items",
 ] as const);
 export type AgentPendingWriteSummary = Readonly<
   Record<(typeof AGENT_PENDING_WRITE_SUMMARY_FIELDS)[number], number>
 >;
+
+/** 工程快照恢复范围；translations 保留规则/知识/资产/聊天，file 替换整个 .lg。 */
+export type AgentRestoreScope = "translations" | "project" | "file";
 
 /** ask_user 的固定选项，按推荐顺序排列。 */
 export type AgentQuestionOption = JsonRecord & {

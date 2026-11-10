@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { resolve_app_locale } from "../../domain/app-language";
 import { project_knowledge_template, record_source_paths } from "./project-knowledge";
 import { GameDirectoryOperations } from "../file/shared/game/game-directory-operations";
@@ -71,6 +72,7 @@ import type { RuntimeLease, RuntimeOperationGate } from "../runtime-operation-ga
 import { ProjectSessionState } from "./project-session-state";
 import { ProjectFileLock, resolve_project_file_identity } from "./project-file-lock";
 import type { ProjectSnapshotService } from "./project-snapshot-service";
+import type { ProjectScheduledBackupService } from "./project-scheduled-backup";
 import type { ProjectWriteStore } from "./project-write-store";
 import {
   resolve_project_prompt_storage,
@@ -127,6 +129,7 @@ export class ProjectLifecycleService {
     native_fs: NativeFs = default_native_fs,
     private readonly game_prepare_execution?: GamePrepareExecution,
     private readonly snapshots?: ProjectSnapshotService,
+    private readonly scheduled_backups?: ProjectScheduledBackupService,
   ) {
     this.database = database;
     this.runtime_gate = runtime_gate;
@@ -181,7 +184,10 @@ export class ProjectLifecycleService {
         this.snapshots !== undefined &&
         (await this.database.project_requires_migration(project_path))
       ) {
-        await this.snapshots.create(project_path, "before-project-migration");
+        await this.snapshots.create(project_path, "before-project-migration", {
+          task: `migration:${project_path}`,
+          protect: true,
+        });
       }
       await this.database.prepare(project_path, body["confirmed_target_app_version"]);
       // 打开期迁移只生成 operation，和 updated_at 一起提交后才暴露 loaded 状态
@@ -203,6 +209,15 @@ export class ProjectLifecycleService {
       });
       committed = true;
       const response = await this.activate_project(project_path, opened.snapshot, next_lock);
+      // 打开工程时检查用户定时备份；独立读取队列，不阻塞当前加载。
+      void this.scheduled_backups?.create_if_due(project_path).catch((error: unknown) => {
+        this.log_manager.warning("用户定时备份启动检查失败。", {
+          source: "project_scheduled_backup",
+          context: { operation: "check_on_open" },
+          error,
+          targets: { window: true },
+        });
+      });
       return opened.alignment === null
         ? response
         : { ...response, settings_alignment: opened.alignment as unknown as JsonValue };
@@ -642,7 +657,7 @@ export class ProjectLifecycleService {
     }
   }
 
-  /** 恢复只覆盖工程数据表，保留当前 Agent 对话；Agent 工具与 UI 共用同一入口。 */
+  /** 恢复按范围只覆盖工程数据；file 替换整个 .lg，translations/project 保留当前对话。 */
   public async restore_snapshot(body: JsonRecord, agentLease?: RuntimeLease): Promise<JsonRecord> {
     const operation = async (): Promise<JsonRecord> => {
       const project_path = this.session_state.require_loaded_project_path();
@@ -652,36 +667,151 @@ export class ProjectLifecycleService {
           diagnostic_context: { reason: "project_snapshot_service_missing" },
         });
       }
+      const scope = normalize_restore_scope(body["scope"]);
       const { snapshot, file_path } = snapshots.resolve(project_path, body["file"]);
-      if (!snapshots.is_compatible(snapshot)) {
+      // file 是最后手段：允许旧版本备份，由 prepare 负责迁移；表级恢复要求同版本。
+      if (scope !== "file" && !snapshots.is_compatible(snapshot)) {
         throw new AppErrors.AppError("project.snapshot_incompatible");
       }
-      const safety = await snapshots.create(project_path, "before-restore");
-      await this.database.restore_project_tables(project_path, file_path);
-      await this.database.transaction(project_path, (writer) => {
-        writer.bump_section_revisions(project_path, ["files", "items"]);
-        writer.set_meta(project_path, "updated_at", this.build_timestamp());
-      });
-      let change;
-      try {
-        change = await this.write_store.notify_project_restored(project_path);
-      } catch (cause) {
-        throw new AppErrors.AppError("data.committed_sync_failed", {
-          cause,
-          public_details: { committed: true, action: "reload_project" },
-          diagnostic_context: { operation: "restore_snapshot_after_commit" },
-        });
-      }
-      return {
-        restored: snapshot.file,
-        safety_snapshot: safety?.file ?? null,
-        project: { path: project_path, loaded: true },
-        section_revisions: change.sectionRevisions,
-      };
+      return await this.restore_snapshot_file(project_path, file_path, snapshot.file, scope);
     };
     return agentLease === undefined
       ? await this.runtime_gate.run_project_write(operation)
       : await this.runtime_gate.run_agent_project_write(operation);
+  }
+
+  /** 恢复用户定时备份；定时备份目录由用户选择，仍走同一套安全快照与范围恢复。 */
+  public async restore_scheduled_backup(
+    body: JsonRecord,
+    agentLease?: RuntimeLease,
+  ): Promise<JsonRecord> {
+    const operation = async (): Promise<JsonRecord> => {
+      const project_path = this.session_state.require_loaded_project_path();
+      const scheduled = this.scheduled_backups;
+      if (scheduled === undefined) {
+        throw new AppErrors.AppError("runtime.internal_invariant", {
+          diagnostic_context: { reason: "project_scheduled_backup_service_missing" },
+        });
+      }
+      const scope = normalize_restore_scope(body["scope"]);
+      const { entry, file_path } = scheduled.resolve(project_path, body["file"]);
+      if (scope !== "file" && !scheduled.is_compatible(entry)) {
+        throw new AppErrors.AppError("project.snapshot_incompatible");
+      }
+      return await this.restore_snapshot_file(project_path, file_path, entry.file, scope);
+    };
+    return agentLease === undefined
+      ? await this.runtime_gate.run_project_write(operation)
+      : await this.runtime_gate.run_agent_project_write(operation);
+  }
+
+  /** 具体恢复动作；调用方已经取得工程写租约。 */
+  private async restore_snapshot_file(
+    project_path: string,
+    file_path: string,
+    snapshot_file: string,
+    scope: "translations" | "project" | "file",
+  ): Promise<JsonRecord> {
+    const snapshots = this.snapshots;
+    if (snapshots === undefined) {
+      throw new AppErrors.AppError("runtime.internal_invariant", {
+        diagnostic_context: { reason: "project_snapshot_service_missing" },
+      });
+    }
+    const safety = await snapshots.create(project_path, "before-restore");
+    if (scope === "file") {
+      const temporary_path = path.join(
+        path.dirname(project_path),
+        `.${randomUUID()}.restore.tmp`,
+      );
+      try {
+        this.native_fs.copy_file(file_path, temporary_path);
+        await this.database.close_project(project_path);
+        await this.database.replace_project_file(temporary_path, project_path);
+        await this.database.prepare(project_path);
+        const reloaded = await this.database.read(project_path, (reader) =>
+          new ProjectDataReader(reader).read_snapshot(project_path),
+        );
+        this.cache.clearProject(project_path);
+        this.cache.installProject(project_path, reloaded);
+        await this.session_state.mark_loaded(project_path);
+        return {
+          restored: snapshot_file,
+          safety_snapshot: safety?.file ?? null,
+          scope,
+          project: { path: project_path, loaded: true },
+          section_revisions: reloaded.section_revisions,
+        };
+      } finally {
+        try {
+          this.native_fs.unlink(temporary_path, { force: true });
+        } catch {
+          // 替换成功后临时副本已不存在；清理失败不影响已提交的工程文件。
+        }
+      }
+    }
+
+    await this.database.restore_project_tables(project_path, file_path, scope);
+    await this.database.transaction(project_path, (writer) => {
+      writer.bump_section_revisions(
+        project_path,
+        scope === "translations" ? ["items"] : ["files", "items"],
+      );
+      writer.set_meta(project_path, "updated_at", this.build_timestamp());
+    });
+    let change;
+    try {
+      change = await this.write_store.notify_project_restored(project_path);
+    } catch (cause) {
+      throw new AppErrors.AppError("data.committed_sync_failed", {
+        cause,
+        public_details: { committed: true, action: "reload_project" },
+        diagnostic_context: { operation: "restore_snapshot_after_commit" },
+      });
+    }
+    return {
+      restored: snapshot_file,
+      safety_snapshot: safety?.file ?? null,
+      scope,
+      project: { path: project_path, loaded: true },
+      section_revisions: change.sectionRevisions,
+    };
+  }
+
+  /** rollback 恢复最近一个非安全快照；默认只恢复翻译，适合单次 apply/批量写入。 */
+  public async rollback_snapshot(
+    agentLease?: RuntimeLease,
+    scope: "translations" | "project" = "translations",
+  ): Promise<JsonRecord> {
+    const project_path = this.session_state.require_loaded_project_path();
+    const snapshots = this.snapshots;
+    if (snapshots === undefined) {
+      throw new AppErrors.AppError("runtime.internal_invariant", {
+        diagnostic_context: { reason: "project_snapshot_service_missing" },
+      });
+    }
+    const target = (await snapshots.list(project_path)).find(
+      (snapshot) => snapshot.reason !== "before-restore",
+    );
+    if (target === undefined) throw new AppErrors.AppError("project.snapshot_not_found");
+    return await this.restore_snapshot({ file: target.file, scope }, agentLease);
+  }
+
+  /** restore_anchor 恢复当前任务锚点；用于多次修正都失败后的整体回退。 */
+  public async restore_anchor_snapshot(
+    agentLease?: RuntimeLease,
+    scope: "translations" | "project" | "file" = "translations",
+  ): Promise<JsonRecord> {
+    const project_path = this.session_state.require_loaded_project_path();
+    const snapshots = this.snapshots;
+    if (snapshots === undefined) {
+      throw new AppErrors.AppError("runtime.internal_invariant", {
+        diagnostic_context: { reason: "project_snapshot_service_missing" },
+      });
+    }
+    const target = (await snapshots.list(project_path)).find((snapshot) => snapshot.anchor);
+    if (target === undefined) throw new AppErrors.AppError("project.snapshot_not_found");
+    return await this.restore_snapshot({ file: target.file, scope }, agentLease);
   }
 
   /** 同一路径 reload 复用现有锁，避免自己与自己的另一把锁冲突。 */
@@ -926,4 +1056,13 @@ export class ProjectLifecycleService {
   private build_timestamp(): string {
     return new Date().toISOString();
   }
+}
+
+/** 未指定范围时使用 translations；未知范围拒绝，避免误触发全量替换。 */
+function normalize_restore_scope(value: unknown): "translations" | "project" | "file" {
+  if (value === undefined || value === "translations") return "translations";
+  if (value === "project" || value === "file") return value;
+  throw new AppErrors.AppError("request.validation_failed", {
+    diagnostic_context: { reason: "invalid_restore_scope" },
+  });
 }

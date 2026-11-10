@@ -18,6 +18,17 @@ export const ja_jp_function_settings_page = {
       description:
         "モデルの応答を待つ最長時間（秒）です。時間内に応答がない場合、タスクは失敗となります",
     },
+    project_backup_interval_hours: {
+      title: "ユーザーバックアップ間隔（時間）",
+      description:
+        "アプリを開いている間、N 時間ごとに完全な .lg をユーザーバックアップフォルダーへ保存します。最後の手段であり、自動削除はありません。アプリを閉じている間は次回起動まで待機します。",
+    },
+    project_backup_directory: {
+      title: "ユーザーバックアップフォルダー",
+      description:
+        "空欄なら .lg と同じフォルダーを使います。完全な .lg のみをコピーし、userdata、スキル、ワークスペースは含めません。",
+      choose: "フォルダーを選択",
+    },
     project_snapshot_limit: {
       title: "プロジェクトの自動スナップショット数",
       description:
@@ -53,6 +64,9 @@ export const ja_jp_function_settings_page = {
       "参照する後文の項目数は 0 から 9999999 の整数で入力してください …",
     request_timeout_invalid: "タイムアウトには有効な範囲の数値を入力してください …",
     project_snapshot_limit_invalid: "自動スナップショット数は 0 から 20 の整数で入力してください …",
+    project_backup_interval_hours_invalid:
+      "ユーザーバックアップ間隔は 1 から 24 の整数で入力してください …",
+    pick_backup_directory_failed: "バックアップフォルダーを選択できませんでした …",
     pick_directory_failed: "フォルダーを選択できませんでした。固定の保存先を選び直してください …",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_function_settings_page>;

@@ -4,6 +4,8 @@ import {
   CONTEXT_LINES_THRESHOLD_MAX,
   PROJECT_SNAPSHOT_LIMIT_MIN,
   PROJECT_SNAPSHOT_LIMIT_MAX,
+  PROJECT_BACKUP_INTERVAL_MIN,
+  PROJECT_BACKUP_INTERVAL_MAX,
   TRANSLATION_SAVE_MODES,
   PROJECT_SAVE_MODES,
   is_project_save_mode,
@@ -11,6 +13,7 @@ import {
 } from "@domain/setting";
 import { SaveLocationRow } from "./save-location-row";
 import { NumberSettingRow } from "./number-setting-row";
+import { BackupDirectoryRow } from "./backup-directory-row";
 
 import { useI18n } from "@frontend/app/locale/locale-context";
 import "@frontend/pages/function-settings-page/function-settings-page.css";
@@ -90,6 +93,29 @@ export function FunctionSettingsPage(): JSX.Element {
           max={PROJECT_SNAPSHOT_LIMIT_MAX}
           integer={true}
           on_commit={function_settings_state.update_project_snapshot_limit}
+        />
+
+        <NumberSettingRow
+          title={t("function_settings_page.fields.project_backup_interval_hours.title")}
+          description={t("function_settings_page.fields.project_backup_interval_hours.description")}
+          invalid_message={t(
+            "function_settings_page.feedback.project_backup_interval_hours_invalid",
+          )}
+          value={function_settings_state.snapshot.project_backup_interval_hours}
+          pending={function_settings_state.pending_state.project_backup_interval_hours}
+          min={PROJECT_BACKUP_INTERVAL_MIN}
+          max={PROJECT_BACKUP_INTERVAL_MAX}
+          integer={true}
+          on_commit={function_settings_state.update_project_backup_interval_hours}
+        />
+
+        <BackupDirectoryRow
+          title={t("function_settings_page.fields.project_backup_directory.title")}
+          description={t("function_settings_page.fields.project_backup_directory.description")}
+          path={function_settings_state.snapshot.project_backup_directory}
+          choose_label={t("function_settings_page.fields.project_backup_directory.choose")}
+          pending={function_settings_state.pending_state.project_backup_directory}
+          on_choose={function_settings_state.choose_project_backup_directory}
         />
 
         <SaveLocationRow

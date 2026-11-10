@@ -73,6 +73,27 @@ export function register_api_routes(context: ApiRouteContext): void {
   );
   context.postJson("/api/session/project/open", (body) => lifecycle.load_project(body));
   context.postJson("/api/session/project/create", (body) => lifecycle.create_project_commit(body));
+  context.postJson("/api/session/project/snapshots", async () => {
+    const project_path = services.state.session.require_loaded_project_path();
+    return { snapshots: await services.projectSnapshots.list(project_path) };
+  });
+  context.postJson("/api/session/project/snapshot/restore", (body) =>
+    lifecycle.restore_snapshot(body),
+  );
+  context.postJson("/api/session/project/snapshot/rollback", () =>
+    lifecycle.rollback_snapshot(),
+  );
+  context.postJson("/api/session/project/scheduled-backups", async () => {
+    const project_path = services.state.session.require_loaded_project_path();
+    const description = await services.projectScheduledBackup.describe(project_path);
+    return {
+      ...description,
+      backups: await services.projectScheduledBackup.list(project_path),
+    };
+  });
+  context.postJson("/api/session/project/scheduled-backups/restore", (body) =>
+    lifecycle.restore_scheduled_backup(body),
+  );
 
   context.app.get("/api/events/stream", () => context.createEventStreamResponse());
   context.postJson("/api/runtime/snapshot", () => services.runtime.getSnapshot());

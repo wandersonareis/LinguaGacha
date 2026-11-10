@@ -105,6 +105,9 @@ export const ko_kr_agent_page = {
     tooltip: "쓰기 권한 승인 모드",
     title: "프로젝트 데이터 쓰는 중",
     summary: {
+      mass_change: "대량 쓰기가 감지되었습니다. 확인해 주세요",
+      mass_items: "이번 항목 수: {count}",
+      same_dst: "동일 번역: {count}",
       files: "파일 {count}개",
       pages: "페이지 데이터 {count}페이지",
       items: "항목 데이터 {count}개",

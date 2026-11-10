@@ -104,6 +104,9 @@ export const en_us_agent_page = {
     tooltip: "Write permission approval mode",
     title: "Writing project data",
     summary: {
+      mass_change: "Mass write detected. Please confirm.",
+      mass_items: "Items in batch: {count}",
+      same_dst: "Same translation: {count}",
       files: "{count} files",
       pages: "Page data: {count} pages",
       items: "Entry data: {count} entries",

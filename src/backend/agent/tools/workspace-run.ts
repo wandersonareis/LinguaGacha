@@ -21,12 +21,18 @@ import { NPM_DESCRIPTION } from "../npm/description";
 const { defaultTimeoutSeconds, minTimeoutSeconds, maxTimeoutSeconds } =
   AGENT_WORKSPACE_RUNTIME_POLICY;
 
+/** 执行端口结果可携带外部写入检测与预脚本恢复点。 */
+type AgentWorkspaceRunOutcome = Awaited<ReturnType<AgentWorkspacePort["run"]>> & {
+  external_project_write?: boolean;
+  restore_point?: string | null;
+};
+
 /** 执行程序并刷新技能事实，随后投影模型可见的执行记录与图片。 */
 export function create_agent_workspace_run_tool(options: {
   run: (
     request: Readonly<{ script: string; timeoutMs: number; callId: string }>, // `callId` 关联界面上的工具条目
     signal: AbortSignal,
-  ) => ReturnType<AgentWorkspacePort["run"]>;
+  ) => Promise<AgentWorkspaceRunOutcome>;
   refresh_skills: () => Promise<unknown>;
 }): ToolRegistration {
   return define_agent_tool({
@@ -73,6 +79,8 @@ export function create_agent_workspace_run_tool(options: {
       "|`exitCode`、`signal`|进程退出码与退出信号|",
       "|`stdout`、`stderr`|`{ path, bytes, content }`，超额时以 `message` 补读提示代替 `content`|",
       "|`images`|`emitImage` 输出的图片信息|",
+      "|`external_project_write`|脚本直接改了 `.lg` 时为 `true`；此时必须停止，先恢复 `restore_point`，不要继续修正|",
+      "|`restore_point`|本次脚本前的 full 快照文件名；用于 Agent 恢复|",
       "",
       "### 失败与恢复",
       "",
@@ -185,6 +193,8 @@ export function create_agent_workspace_run_tool(options: {
       const { execution, images } = outcome.value;
       const result = agent_tool_result({
         ...execution,
+        external_project_write: outcome.value.external_project_write === true,
+        restore_point: outcome.value.restore_point ?? null,
         ...(images.length === 0
           ? {}
           : {

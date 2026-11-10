@@ -18,6 +18,17 @@ export const ko_kr_function_settings_page = {
       description:
         "모델 응답을 기다리는 최대 시간(초)입니다. 시간 내에 응답이 없으면 작업을 실패로 처리합니다",
     },
+    project_backup_interval_hours: {
+      title: "사용자 백업 간격(시간)",
+      description:
+        "앱이 열려 있는 동안 N시간마다 전체 .lg를 사용자 백업 폴더에 저장합니다. 최후의 수단이며 자동 정리가 없습니다. 앱이 닫혀 있으면 다음 실행까지 기다립니다.",
+    },
+    project_backup_directory: {
+      title: "사용자 백업 폴더",
+      description:
+        "비워 두면 .lg 폴더를 사용합니다. 전체 .lg만 복사하며 userdata, 스킬, 워크스페이스는 포함하지 않습니다.",
+      choose: "폴더 선택",
+    },
     project_snapshot_limit: {
       title: "프로젝트 자동 스냅샷 수",
       description:
@@ -53,6 +64,9 @@ export const ko_kr_function_settings_page = {
       "참고할 뒤따르는 문맥의 항목 수는 0에서 9999999 사이의 정수여야 합니다 …",
     request_timeout_invalid: "요청 제한 시간에 유효한 범위의 숫자를 입력해 주세요 …",
     project_snapshot_limit_invalid: "자동 프로젝트 스냅샷 수는 0에서 20 사이의 정수여야 합니다 …",
+    project_backup_interval_hours_invalid:
+      "사용자 백업 간격은 1에서 24 사이의 정수여야 합니다 …",
+    pick_backup_directory_failed: "백업 폴더를 선택하지 못했습니다 …",
     pick_directory_failed: "폴더를 선택하지 못했습니다. 지정 저장 폴더를 다시 선택해 주세요 …",
   },
 } satisfies LocaleMessageSchema<typeof zh_cn_function_settings_page>;

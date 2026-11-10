@@ -4,7 +4,7 @@ import {
 } from "../../project/project-knowledge";
 import { AGENT_DOCUMENT_MAX_BYTES } from "../../../shared/agent";
 import type { ProjectContentService } from "../../project/project-content-service";
-import { project_agent_workspace_warning } from "./service";
+import { project_agent_workspace_warning, summarize_mass_change } from "./service";
 import { Check } from "typebox/value";
 import { AGENT_WORKSPACE_PROJECT_META_SCHEMA, AGENT_WORKSPACE_WARNING_SCHEMA } from "./schema";
 import type { ProofreadingWarning } from "../../../shared/proofreading/proofreading-types";
@@ -66,6 +66,24 @@ import {
 import { workspace_execution } from "../../../test/agent-workspace-fixture";
 
 const VALID_WORKSPACE_RUN = { script: "console.log(null);", timeoutMs: 180_000 };
+
+describe("mass change guard", () => {
+  it("同一译文覆盖大量条目时标记为 mass_change", () => {
+    const items = Array.from({ length: 100 }, () => ({ dst: "mesmo texto" }));
+    expect(summarize_mass_change(items, 75_000)).toEqual({
+      mass_change: 1,
+      same_dst: 100,
+      mass_items: 100,
+    });
+  });
+
+  it("小批量或分散译文不触发 mass_change", () => {
+    const small = Array.from({ length: 50 }, () => ({ dst: "mesmo texto" }));
+    expect(summarize_mass_change(small, 75_000).mass_change).toBe(0);
+    const distributed = Array.from({ length: 100 }, (_, index) => ({ dst: `texto ${index}` }));
+    expect(summarize_mass_change(distributed, 75_000).mass_change).toBe(0);
+  });
+});
 
 describe("AgentWorkspaceService", () => {
   let temp_dir = "";
@@ -161,6 +179,7 @@ describe("AgentWorkspaceService", () => {
     expect(fixture.snapshots.create).toHaveBeenCalledWith(
       fixture.snapshot.projectPath,
       "before-agent-apply",
+      { task: "agent", protect: true },
     );
   });
 
@@ -1269,6 +1288,9 @@ describe("AgentWorkspaceService", () => {
       files: 0,
       knowledge: 0,
       prompts: 1,
+      mass_change: 0,
+      mass_items: 1,
+      same_dst: 1,
     });
     expect(fixture.write_store).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1999,6 +2021,9 @@ it("PDF 零条目工程按页保存、隔离旧指纹，语言变化后重建工
       files: 0,
       knowledge: 0,
       prompts: 0,
+      mass_change: 0,
+      mass_items: 0,
+      same_dst: 0,
     });
     expect((await services.project.summary.read())["snapshot"]).toMatchObject({
       entries: [

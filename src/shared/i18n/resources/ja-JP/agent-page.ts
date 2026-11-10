@@ -106,6 +106,9 @@ export const ja_jp_agent_page = {
     tooltip: "書き込み権限の承認モード",
     title: "プロジェクトデータを書き込み中",
     summary: {
+      mass_change: "一括書き込みを検出しました。確認してください",
+      mass_items: "今回の項目数: {count}",
+      same_dst: "同じ訳文: {count}",
       files: "ファイル {count} 件",
       pages: "ページデータ {count} ページ",
       items: "項目データ {count} 件",

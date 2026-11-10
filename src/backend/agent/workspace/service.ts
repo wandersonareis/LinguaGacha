@@ -567,7 +567,27 @@ export class AgentWorkspaceService {
     const project_meta: JsonRecord = {
       knowledge: { fp: knowledge.fp },
       ...language,
-      ...(backups === null ? {} : { backups: backups as unknown as JsonValue }),
+      ...(backups === null
+        ? {}
+        : {
+            backups: {
+              directory: backups.directory,
+              limit: backups.limit,
+              count: backups.count,
+              latest:
+                backups.latest === null
+                  ? null
+                  : {
+                      file: backups.latest.file,
+                      created_at: backups.latest.created_at,
+                      reason: backups.latest.reason,
+                      app_version: backups.latest.app_version,
+                      size: backups.latest.size,
+                      anchor: backups.latest.anchor,
+                      protect: backups.latest.protect,
+                    },
+            } as unknown as JsonValue,
+          }),
       counts: {
         files: snapshot_files.length,
         items: current_items.length,
@@ -800,6 +820,7 @@ export class AgentWorkspaceService {
   /** 一次准备真实差异，按需等待审批，再把同一份差异交给跨 section 事务。 */
   public async apply_workspace(
     request_approval?: (summary: AgentPendingWriteSummary) => Promise<void>,
+    task_token = "agent",
   ): Promise<JsonRecord> {
     return await this.exclusive(async () => {
       const active = this.require_active();
@@ -828,9 +849,10 @@ export class AgentWorkspaceService {
         Object.values(parsed.files).some((rows) => rows.length) ||
         parsed.rejected.some((row) => row.scope === "files")
       )
-        return this.apply_files(active, parsed, request_approval);
+        return this.apply_files(active, parsed, request_approval, task_token);
       let preview: ReturnType<typeof resolve_agent_workspace_writes>;
       let all_rejected: AgentWorkspaceRejectedChange[];
+      let project_item_count = 0;
       try {
         const quality = this.options.cache.quality.readBlock(); // 读取边界已校验规则，预演只借用当前事实。
         const current: AgentWorkspaceCurrentFacts = {
@@ -857,6 +879,7 @@ export class AgentWorkspaceService {
           prompts: project_workspace_prompts(this.options.cache.prompts.readBlock()),
           duplicateFilterEnabled: await this.read_duplicate_filter_enabled(active.projectPath),
         };
+        project_item_count = current.items.length;
         preview = resolve_agent_workspace_writes({ batch: parsed.batch, current });
         all_rejected = normalize_workspace_rejections(
           [...parsed.rejected, ...preview.rejected],
@@ -889,13 +912,22 @@ export class AgentWorkspaceService {
       }
       // 只按预演后的实际变化决定审批，拒绝或未变化的内容不参与判断。
       if (Object.keys(preview.applied).some((scope) => scope !== "knowledge"))
-        await request_approval?.(summarize_applied_changes(preview.applied));
+        await request_approval?.({
+          ...summarize_applied_changes(preview.applied),
+          ...summarize_mass_change(
+            parsed.batch.items.map((item) => ({ dst: item.update.dst ?? "" })),
+            project_item_count,
+          ),
+        });
 
       let write_ack: AgentWorkspaceStoreResult;
       try {
         write_ack = await this.options.runtimeGate.run_agent_project_write(async () => {
           // 风险写入前先备份工程；失败则本批次不提交，避免再次出现不可逆的翻译损失。
-          await this.options.snapshots?.create(active.projectPath, "before-agent-apply");
+          await this.options.snapshots?.create(active.projectPath, "before-agent-apply", {
+            task: task_token,
+            protect: true,
+          });
           return await this.options.writeStore.apply_agent_workspace_changes({
             projectPath: active.projectPath,
             source: "agent_workspace_apply",
@@ -938,6 +970,7 @@ export class AgentWorkspaceService {
     active: ActiveAgentWorkspace,
     parsed: ParsedAgentWorkspaceChanges,
     approve?: (summary: AgentPendingWriteSummary) => Promise<void>,
+    task_token = "agent",
   ): Promise<JsonRecord> {
     const preview = await preview_file_changes({
       parsed,
@@ -974,8 +1007,12 @@ export class AgentWorkspaceService {
       files: preview.created + preview.files.updates.length + preview.files.deletes.length,
     });
     try {
-      const result = await this.options.runtimeGate.run_agent_project_write((signal) =>
-        this.options.files.apply_file_changes({
+      const result = await this.options.runtimeGate.run_agent_project_write(async (signal) => {
+        await this.options.snapshots?.create(active.projectPath, "before-agent-apply", {
+          task: task_token,
+          protect: true,
+        });
+        return await this.options.files.apply_file_changes({
           projectPath: active.projectPath,
           source: "agent_workspace_apply",
           expectedSectionRevisions: { files: active.revisions.files ?? 0 },
@@ -987,8 +1024,8 @@ export class AgentWorkspaceService {
           updates: preview.files.updates,
           deletes: preview.files.deletes.map((row) => row.file_path),
           signal,
-        }),
-      );
+        });
+      });
       if (result.kind === "source_failed")
         return reject(
           result.failures.map((failure) => ({
@@ -1195,6 +1232,31 @@ function is_inside_path(root: string, target: string): boolean {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+const MASS_CHANGE_MIN_ITEMS = 100;
+const MASS_CHANGE_SAME_DST_RATIO = 0.9;
+const MASS_CHANGE_PROJECT_RATIO = 0.1;
+
+/** 审批前识别可能覆盖全项目的重复译文；命中后即使 auto 也必须询问用户。 */
+export function summarize_mass_change(
+  items: readonly { dst?: string }[],
+  project_item_count: number,
+): Pick<AgentPendingWriteSummary, "mass_change" | "same_dst" | "mass_items"> {
+  const total = items.length;
+  if (total === 0) return { mass_change: 0, same_dst: 0, mass_items: 0 };
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const dst = item.dst ?? "";
+    counts.set(dst, (counts.get(dst) ?? 0) + 1);
+  }
+  const same_dst = Math.max(...counts.values());
+  const project_ratio = total / Math.max(project_item_count, 1);
+  const suspicious =
+    total >= MASS_CHANGE_MIN_ITEMS &&
+    (same_dst / total >= MASS_CHANGE_SAME_DST_RATIO ||
+      project_ratio >= MASS_CHANGE_PROJECT_RATIO);
+  return { mass_change: suspicious ? 1 : 0, same_dst, mass_items: total };
+}
+
 /** 审批摘要只统计预演实际候选对象。 */
 function summarize_applied_changes(
   applied: AgentWorkspaceAppliedSummary,
@@ -1214,6 +1276,9 @@ function summarize_applied_changes(
     preReplacement: count_quality("pre_replacement"),
     postReplacement: count_quality("post_replacement"),
     prompts: applied.prompts?.updated.length ?? 0,
+    mass_change: 0,
+    same_dst: 0,
+    mass_items: 0,
   };
 }
 

@@ -113,7 +113,11 @@ describe("workspace_run", () => {
     controller.abort(reason);
     released.resolve();
 
-    await expect(result).resolves.toHaveProperty("details", workspace_execution()); // 回执只含执行记录。
+    await expect(result).resolves.toHaveProperty("details", {
+      ...workspace_execution(),
+      external_project_write: false,
+      restore_point: null,
+    }); // 回执只含执行记录和外部写入检测。
   });
   it("脚本成功或失败后都刷新技能，仅刷新失败时保留刷新原因", async () => {
     const script_error = new Error("脚本失败");

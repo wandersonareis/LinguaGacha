@@ -747,6 +747,9 @@ describe("AgentChatStore", () => {
         files: 0,
         knowledge: 0,
         prompts: 0,
+        mass_change: 0,
+        mass_items: 0,
+        same_dst: 0,
       },
     };
     desktop_api_mocks.api_get.mockResolvedValue(agent_snapshot({ pendingDecision: waiting }));
@@ -827,6 +830,9 @@ describe("AgentChatStore", () => {
           files: 0,
           knowledge: 0,
           prompts: 0,
+          mass_change: 0,
+          mass_items: 0,
+          same_dst: 0,
         },
       } satisfies AgentPendingDecision,
       path: "/api/agent/write-approval/resolve",
@@ -949,6 +955,9 @@ describe("AgentChatStore", () => {
         files: 6,
         knowledge: 0,
         prompts: 0,
+        mass_change: 0,
+        mass_items: 1,
+        same_dst: 1,
       },
     };
 

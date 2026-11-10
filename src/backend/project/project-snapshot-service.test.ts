@@ -16,7 +16,17 @@ describe("ProjectSnapshotService", () => {
     const service = create_service(temp.path, create_settings(2), database);
     try {
       const first = await service.create(project, "manual");
+      await database.transaction(project, (writer) => {
+        writer.patch_item_translation_fields(project, [
+          { item_id: 1, next: { dst: "Second", name_dst: "", status: "PROCESSED" } },
+        ]);
+      });
       const second = await service.create(project, "before-agent-apply");
+      await database.transaction(project, (writer) => {
+        writer.patch_item_translation_fields(project, [
+          { item_id: 1, next: { dst: "Third", name_dst: "", status: "PROCESSED" } },
+        ]);
+      });
       const third = await service.create(project, "before-restore");
       expect(first).not.toBeNull();
       expect(second).not.toBeNull();

@@ -20,6 +20,7 @@ export type AgentWorkspaceApprovalPort = {
 export function create_agent_workspace_apply_tool(options: {
   workspace: Pick<AgentWorkspacePort, "apply_workspace">;
   approval: AgentWorkspaceApprovalPort;
+  task_token: () => string;
 }): ToolRegistration {
   return define_agent_tool({
     name: "workspace_apply",
@@ -28,6 +29,13 @@ export function create_agent_workspace_apply_tool(options: {
       "",
       "- 内容批次：条目、页面、提示词、质量规则和工程知识。先完成检查，再按审批模式请求审批，实际变化只有工程知识时不请求审批。通过检查的记录在同一事务中提交，被拒绝的记录列入 `rejected`。事务失败时全部回滚。",
       "- 文件批次：`changes/files/` 中有任何记录时按文件批次处理，无法解析的行也算。文件批次不能包含其他变更。任一记录被拒绝时，整批都不提交。",
+      "",
+      "### 批量风险",
+      "",
+      "- 当批次把大量条目改成同一译文、占项目比例过高或触发 `mass_change` 时，即使审批模式为自动，也必须让用户明确确认后才能提交。",
+      "- 该确认不是自动审批的替代；用户拒绝时本批不写入。",
+      "- 发现范围异常时先拆分批次或修正变更清单，不要提交后依赖回滚。",
+      "",
       "",
       "### 回执",
       "",
@@ -65,13 +73,11 @@ export function create_agent_workspace_apply_tool(options: {
       const signal = context.abortSignal;
       signal?.throwIfAborted();
       // 每批开始时确定审批方式，期间修改偏好只影响后续批次。
-      const result = await options.workspace.apply_workspace(
-        options.approval.read_mode() === "auto"
-          ? undefined
-          : async (summary) => {
-              await options.approval.wait_for_decision(tool_call_id, summary, signal);
-            },
-      );
+      // mass_change 即使 auto 也必须让用户确认；普通批次沿用原审批模式。
+      const result = await options.workspace.apply_workspace(async (summary) => {
+        if (options.approval.read_mode() === "auto" && summary.mass_change !== 1) return;
+        await options.approval.wait_for_decision(tool_call_id, summary, signal);
+      }, options.task_token());
       return agent_tool_result(result);
     },
   });

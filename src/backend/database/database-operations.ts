@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import path from "node:path";
 import { compare_app_version, parse_app_version } from "../../shared/app-version";
 import type { ProjectPreview } from "../../shared/project-preview";
@@ -34,6 +34,30 @@ const PROJECT_SNAPSHOT_TABLES = [
   "items",
   "rules",
 ] as const;
+
+// 工程状态哈希只覆盖工程事实，Agent 聊天/SDK 表不属于项目内容。
+const PROJECT_STATE_TABLES = [
+  { name: "items", sql: "SELECT id, data FROM items ORDER BY id", columns: ["id", "data"] },
+  {
+    name: "assets",
+    sql: "SELECT id, path, file_type, sort_order, data, original_size, compressed_size FROM assets ORDER BY id",
+    columns: ["id", "path", "file_type", "sort_order", "data", "original_size", "compressed_size"],
+  },
+  { name: "rules", sql: "SELECT id, type, data FROM rules ORDER BY id", columns: ["id", "type", "data"] },
+  { name: "knowledge", sql: "SELECT path, text FROM knowledge ORDER BY path", columns: ["path", "text"] },
+  {
+    name: "pdf_documents",
+    sql: "SELECT file_path, data FROM pdf_documents ORDER BY file_path",
+    columns: ["file_path", "data"],
+  },
+  {
+    name: "pdf_pages",
+    sql: "SELECT file_path, page, data FROM pdf_pages ORDER BY file_path, page",
+    columns: ["file_path", "page", "data"],
+  },
+] as const;
+
+export type ProjectRestoreScope = "translations" | "project";
 /**
  * `write` 启用写入。`query` 在调用方确认前禁止写入。
  * `read_only` 关闭时不会合并 WAL，也不会清理自己创建的副文件。
@@ -223,8 +247,61 @@ export class ProjectDatabase {
     });
   }
 
-  /** 只恢复工程数据表，保留当前 Agent 对话和 SDK 表，避免恢复快照时丢失会话。 */
-  public restore_project_tables(project_path: string, snapshot_path: string): Promise<void> {
+  /** 只读取工程表并生成稳定哈希；Agent 聊天/SDK 不参与，避免脚本前检测被聊天写入误触。 */
+  public async read_project_state(
+    project_path: string,
+  ): Promise<{ fingerprint: string; project_hash: string }> {
+    return await this.use_connection(
+      project_path,
+      async (record) => {
+        const meta_rows = record.db
+          .prepare("SELECT key, value FROM meta ORDER BY key")
+          .all() as Array<Record<string, unknown>>;
+        const fingerprint = createHash("sha256");
+        for (const row of meta_rows) {
+          const key = String(row["key"]);
+          if (key !== "updated_at" && !key.startsWith("project_runtime_revision.")) continue;
+          update_project_hash(fingerprint, key, row["value"]);
+        }
+        const project_hash = createHash("sha256");
+        for (const row of meta_rows) {
+          const key = String(row["key"]);
+          if (
+            key === "active_chat" ||
+            key === "updated_at" ||
+            key === "applied_writeback_migrations" ||
+            key === "target_app_version" ||
+            key.startsWith("project_runtime_revision.")
+          )
+            continue;
+          update_project_hash(project_hash, "meta", key, row["value"]);
+        }
+        for (const table of PROJECT_STATE_TABLES) {
+          const rows = record.db.prepare(table.sql).all() as Array<Record<string, unknown>>;
+          for (const row of rows) {
+            update_project_hash(
+              project_hash,
+              table.name,
+              ...table.columns.map((column) => row[column]),
+            );
+          }
+        }
+        return {
+          fingerprint: fingerprint.digest("hex"),
+          project_hash: project_hash.digest("hex"),
+        };
+      },
+      false,
+      "query",
+    );
+  }
+
+  /** 按范围恢复工程表，保留当前 Agent 对话和 SDK 表。 */
+  public restore_project_tables(
+    project_path: string,
+    snapshot_path: string,
+    scope: ProjectRestoreScope = "project",
+  ): Promise<void> {
     return this.use_connection(
       project_path,
       async (record) => {
@@ -232,6 +309,10 @@ export class ProjectDatabase {
           .prepare("ATTACH DATABASE ? AS snapshot")
           .run(this.native_fs.to_native_path(snapshot_path));
         try {
+          if (scope === "translations") {
+            this.restore_translation_tables(record.db);
+            return;
+          }
           const active_chat = record.db
             .prepare("SELECT value FROM main.meta WHERE key = ?")
             .get("active_chat");
@@ -259,7 +340,7 @@ export class ProjectDatabase {
         } catch (error) {
           throw new AppErrors.AppError("project.snapshot_incompatible", {
             cause: error,
-            diagnostic_context: { operation: "restore_project_tables" },
+            diagnostic_context: { operation: "restore_project_tables", scope },
           });
         } finally {
           try {
@@ -272,6 +353,52 @@ export class ProjectDatabase {
       true,
       "write",
     );
+  }
+
+  /** translations 只 patch 译文/姓名/状态与翻译 meta，不替换 items 行、不碰规则/知识/资产。 */
+  private restore_translation_tables(db: DatabaseSync): void {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const upsert_meta = db.prepare("INSERT OR REPLACE INTO main.meta (key, value) VALUES (?, ?)");
+      const translation_meta = db
+        .prepare(
+          "SELECT key, value FROM snapshot.meta WHERE key IN ('translation_extras','project_runtime_revision.items','project_runtime_revision.proofreading')",
+        )
+        .all() as Array<Record<string, unknown>>;
+      for (const row of translation_meta) {
+        upsert_meta.run(String(row["key"]), String(row["value"]));
+      }
+      const items = db
+        .prepare("SELECT id, data FROM snapshot.items ORDER BY id")
+        .all() as Array<Record<string, unknown>>;
+      const update_item = db.prepare(
+        "UPDATE main.items SET data = json_set(data, '$.dst', ?, '$.name_dst', json(?), '$.status', ?) WHERE id = ? AND json_extract(data, '$.src') = ? AND json_extract(data, '$.file_path') = ?",
+      );
+      for (const row of items) {
+        const item = JSON.parse(String(row["data"])) as Record<string, unknown>;
+        update_item.run(
+          String(item["dst"] ?? ""),
+          JSON.stringify(item["name_dst"] ?? null),
+          String(item["status"] ?? "NONE"),
+          Number(row["id"]),
+          String(item["src"] ?? ""),
+          String(item["file_path"] ?? ""),
+        );
+      }
+      // PDF 的页数据本身承载译稿与页处置；只替换 PDF 表，不碰其它工程表。
+      db.exec("DELETE FROM main.pdf_pages");
+      db.exec("INSERT INTO main.pdf_pages SELECT * FROM snapshot.pdf_pages");
+      db.exec("DELETE FROM main.pdf_documents");
+      db.exec("INSERT INTO main.pdf_documents SELECT * FROM snapshot.pdf_documents");
+      db.exec("COMMIT");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // 回滚失败保留原始原因。
+      }
+      throw error;
+    }
   }
   /** 排他创建文件，失败时按提交状态决定是否删除本次新文件。 */
   public async create_project(
@@ -577,4 +704,24 @@ export class ProjectDatabase {
       }
     }
   }
+}
+
+/** 哈希只拼接工程事实，区分文本与 BLOB，避免不同列组合产生同一字节流。 */
+function update_project_hash(
+  hash: ReturnType<typeof createHash>,
+  ...values: unknown[]
+): void {
+  for (const value of values) {
+    if (value === null || value === undefined) {
+      hash.update("n\0");
+    } else if (value instanceof Uint8Array) {
+      hash.update(`b${value.byteLength}\0`);
+      hash.update(value);
+    } else {
+      const text = String(value);
+      hash.update(`s${Buffer.byteLength(text)}\0`);
+      hash.update(text);
+    }
+  }
+  hash.update("\u0001");
 }

@@ -57,7 +57,10 @@ describe("批量翻译服务", () => {
   it("启动前保存工程快照", async () => {
     const { service, runtime, snapshots } = setup();
     await service.start({ operation: "translate", mode: "new", scope: { kind: "all" } });
-    expect(snapshots.create).toHaveBeenCalledWith("E:/Project/test.lg", "before-batch-translation");
+    expect(snapshots.create).toHaveBeenCalledWith("E:/Project/test.lg", "before-batch-translation", {
+      task: "batch:E:/Project/test.lg",
+      protect: true,
+    });
     await runtime.dispose();
   });
   it("普通入口拒绝已删除的失败参数", async () => {

@@ -102,6 +102,9 @@ export const zh_cn_agent_page = {
     tooltip: "写入权限审批模式",
     title: "正在写入工程数据",
     summary: {
+      mass_change: "检测到批量写入，请确认",
+      mass_items: "本批条目 {count} 条",
+      same_dst: "相同译文 {count} 条",
       files: "文件 {count} 个",
       pages: "分页数据 {count} 页",
       items: "条目数据 {count} 条",

@@ -1,5 +1,6 @@
 import {
   normalize_context_lines_threshold,
+  normalize_project_backup_interval_hours,
   normalize_project_snapshot_limit,
   type ProjectSaveMode,
   type TranslationSaveMode,
@@ -24,6 +25,8 @@ const FUNCTION_SETTINGS_PENDING_FIELDS = [
   "output_folder_open_on_finish",
   "request_timeout",
   "project_snapshot_limit",
+  "project_backup_interval_hours",
+  "project_backup_directory",
 ] as const;
 
 type UseFunctionSettingsStateResult = {
@@ -37,6 +40,8 @@ type UseFunctionSettingsStateResult = {
   update_following_lines_threshold: (next_value: number) => Promise<void>;
   update_request_timeout: (next_value: number) => Promise<void>;
   update_project_snapshot_limit: (next_value: number) => Promise<void>;
+  update_project_backup_interval_hours: (next_value: number) => Promise<void>;
+  choose_project_backup_directory: () => Promise<void>;
 };
 
 /**
@@ -131,6 +136,32 @@ export function useFunctionSettingsState(): UseFunctionSettingsStateResult {
     [commit_update, snapshot.project_snapshot_limit],
   );
 
+  /** 用户定时备份间隔按小时收敛，范围 1–24。 */
+  const update_project_backup_interval_hours = useCallback(
+    async (next_value: number): Promise<void> => {
+      const normalized = normalize_project_backup_interval_hours(next_value);
+      if (snapshot.project_backup_interval_hours === normalized) return;
+      await commit_update("project_backup_interval_hours", {
+        project_backup_interval_hours: normalized,
+      });
+    },
+    [commit_update, snapshot.project_backup_interval_hours],
+  );
+
+  /** 备份目录由用户选择；取消或失败不改变当前设置。 */
+  const choose_project_backup_directory = useCallback(async (): Promise<void> => {
+    try {
+      const result = await window.desktopApp.pickDirectory(snapshot.project_backup_directory);
+      const selected = result.paths[0];
+      if (result.canceled || selected === undefined) return;
+      await commit_update("project_backup_directory", {
+        project_backup_directory: selected,
+      });
+    } catch (error) {
+      push_error_toast(t("function_settings_page.feedback.pick_backup_directory_failed"), error);
+    }
+  }, [commit_update, snapshot.project_backup_directory, t]);
+
   /** 前后文共用领域计数规则，各字段独立保存。 */
   const update_context_threshold = useCallback(
     async (
@@ -153,6 +184,8 @@ export function useFunctionSettingsState(): UseFunctionSettingsStateResult {
     update_output_folder_open_on_finish,
     update_request_timeout,
     update_project_snapshot_limit,
+    update_project_backup_interval_hours,
+    choose_project_backup_directory,
     update_preceding_lines_threshold: (value) =>
       update_context_threshold("preceding_lines_threshold", value),
     update_following_lines_threshold: (value) =>

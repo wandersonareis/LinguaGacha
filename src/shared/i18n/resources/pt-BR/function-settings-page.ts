@@ -19,6 +19,17 @@ export const pt_br_function_settings_page = {
       description:
         "Tempo máximo de espera por uma resposta do modelo, em segundos. A tarefa falha se nenhuma resposta for recebida a tempo.",
     },
+    project_backup_interval_hours: {
+      title: "Intervalo do backup do usuário (horas)",
+      description:
+        "Com o app aberto, salva um .lg completo na pasta de backup a cada N horas. É o último recurso e não tem limpeza automática; com o app fechado, espera a próxima abertura.",
+    },
+    project_backup_directory: {
+      title: "Pasta de backup do usuário",
+      description:
+        "Vazio usa a pasta do .lg. Apenas o .lg completo é copiado; nada de userdata, skills ou workspace.",
+      choose: "Escolher pasta",
+    },
     project_snapshot_limit: {
       title: "Snapshots automáticos do projeto",
       description:
@@ -57,6 +68,9 @@ export const pt_br_function_settings_page = {
       "O tempo limite de requisição deve ser um número dentro do intervalo válido …",
     project_snapshot_limit_invalid:
       "A quantidade de snapshots automáticos deve ser um número inteiro de 0 a 20 …",
+    project_backup_interval_hours_invalid:
+      "O intervalo do backup do usuário deve ser um número inteiro de 1 a 24 …",
+    pick_backup_directory_failed: "Falha ao escolher a pasta de backup …",
     pick_directory_failed:
       "Falha na seleção da pasta. Escolha novamente a pasta fixa de salvamento …",
   },

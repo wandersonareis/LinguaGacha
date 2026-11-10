@@ -53,6 +53,7 @@ export class GuiBackendBootstrap {
   private execution: AgentExecutionRuntime | null = null; // Agent 停止后统一释放共享执行资源。
   private images: AgentImageService | null = null; // 关闭 Gateway 前取消模型图片准备，排空正在受理的发送请求
   private gateway: ApiGatewayServer | null = null;
+  private backup_timer: ReturnType<typeof setInterval> | null = null; // 用户定时备份的轻量检查器
   private start_promise: Promise<GuiBackendBootstrapStartResult> | null = null; // stop 等待在途启动后再释放资源
   private stop_promise: Promise<void> | null = null; // 并发 stop 共用一次清理，清理期间拒绝 start
 
@@ -118,6 +119,7 @@ export class GuiBackendBootstrap {
         ),
       });
       this.services = services;
+      this.start_scheduled_backups(services);
       const images = new AgentImageService(this.options.imageHost);
       this.images = images;
       // runner 与 catalog 共用同一 AppPathService，避免重复维护可写数据根的选择。
@@ -173,8 +175,11 @@ export class GuiBackendBootstrap {
         runtimeGate: services.state.runtimeGate,
         workspace,
         snapshots: services.projectSnapshots,
-        restoreSnapshot: (file, lease) =>
-          services.project.lifecycle.restore_snapshot({ file }, lease),
+        restoreSnapshot: (file, scope, lease) =>
+          services.project.lifecycle.restore_snapshot({ file, scope }, lease),
+        rollbackSnapshot: (lease) => services.project.lifecycle.rollback_snapshot(lease),
+        restoreAnchorSnapshot: (scope, lease) =>
+          services.project.lifecycle.restore_anchor_snapshot(lease, scope),
         logManager: resources.logManager,
         publish: (topic, payload) => event_stream.publish(topic, payload),
       });
@@ -247,8 +252,25 @@ export class GuiBackendBootstrap {
     }
   }
 
+  /** 定时检查用户备份；读取导出不占 Agent 运行门禁，长任务期间也能执行。 */
+  private start_scheduled_backups(services: BackendServices): void {
+    if (this.backup_timer !== null) return;
+    this.backup_timer = setInterval(() => {
+      const project = services.state.session.snapshot();
+      if (!project.loaded) return;
+      void services.projectScheduledBackup.create_if_due(project.projectPath).catch(() => {
+        // 服务内部已记录用户可见告警；这里只防止未处理的 Promise。
+      });
+    }, 15 * 60 * 1000);
+    (this.backup_timer as { unref?: () => void }).unref?.();
+  }
+
   /** 单项清理失败不跳过后续资源，最终由调用方统一汇总。 */
   private async dispose_runtime(failures: unknown[]): Promise<void> {
+    if (this.backup_timer !== null) {
+      clearInterval(this.backup_timer);
+      this.backup_timer = null;
+    }
     if (this.state === "stopped" && this.resources === null) return;
     this.state = "stopping";
     this.agent?.cancel_uploads();

@@ -40,6 +40,10 @@ export type AgentApprovalMode = (typeof AGENT_APPROVAL_MODES)[number];
 export const PROJECT_SNAPSHOT_LIMIT_MIN = 0;
 export const PROJECT_SNAPSHOT_LIMIT_MAX = 20;
 export const PROJECT_SNAPSHOT_LIMIT_DEFAULT = 5;
+/** 用户备份的定时间隔；按小时，至少 1 小时。 */
+export const PROJECT_BACKUP_INTERVAL_MIN = 1;
+export const PROJECT_BACKUP_INTERVAL_MAX = 24;
+export const PROJECT_BACKUP_INTERVAL_DEFAULT = 24;
 export const RECENT_PROJECT_SETTING_SCHEMA = Type.Object({
   path: Type.String(), // 最近工程路径。
   name: Type.String(), // 从路径生成的完整文件名，包含扩展名。
@@ -56,6 +60,11 @@ export const SETTING_SNAPSHOT_SCHEMA = Type.Object(
       minimum: PROJECT_SNAPSHOT_LIMIT_MIN,
       maximum: PROJECT_SNAPSHOT_LIMIT_MAX,
     }), // 工程自动快照保留数量，0 关闭。
+    project_backup_interval_hours: Type.Integer({
+      minimum: PROJECT_BACKUP_INTERVAL_MIN,
+      maximum: PROJECT_BACKUP_INTERVAL_MAX,
+    }), // 用户定时的 full 备份间隔（小时）。
+    project_backup_directory: Type.String(), // 空 = .lg 同目录；否则用户选择的备份目录。
     translation_save_mode: Type.Enum(TRANSLATION_SAVE_MODES), // GUI 译文生成的保存位置策略。
     translation_fixed_path: Type.String(), // 译文固定模式使用的输出父目录。
     output_folder_open_on_finish: Type.Boolean(), // 译文生成成功后是否打开输出目录。
@@ -93,6 +102,8 @@ export const DEFAULT_SETTING: SettingSnapshot & JsonRecord = {
   project_save_mode: "MANUAL",
   project_fixed_path: "",
   project_snapshot_limit: PROJECT_SNAPSHOT_LIMIT_DEFAULT,
+  project_backup_interval_hours: PROJECT_BACKUP_INTERVAL_DEFAULT,
+  project_backup_directory: "",
   translation_save_mode: "PROJECT",
   translation_fixed_path: "",
   output_folder_open_on_finish: false,
@@ -243,6 +254,9 @@ export class Setting {
     if (key === "project_snapshot_limit") {
       return normalize_project_snapshot_limit(value);
     }
+    if (key === "project_backup_interval_hours") {
+      return normalize_project_backup_interval_hours(value);
+    }
     if (key === "translation_save_mode") {
       return is_translation_save_mode(value) ? value : "PROJECT";
     }
@@ -297,6 +311,15 @@ export function normalize_project_snapshot_limit(value: unknown): number {
   return Math.min(
     PROJECT_SNAPSHOT_LIMIT_MAX,
     Math.max(PROJECT_SNAPSHOT_LIMIT_MIN, Math.trunc(number_value)),
+  );
+}
+
+/** 用户备份间隔按小时取整并限制在 1–24。 */
+export function normalize_project_backup_interval_hours(value: unknown): number {
+  const number_value = normalize_number_setting(value, PROJECT_BACKUP_INTERVAL_DEFAULT);
+  return Math.min(
+    PROJECT_BACKUP_INTERVAL_MAX,
+    Math.max(PROJECT_BACKUP_INTERVAL_MIN, Math.trunc(number_value)),
   );
 }
 

@@ -106,6 +106,9 @@ export const pt_br_agent_page = {
     tooltip: "Modo de aprovação de permissão de escrita",
     title: "Escrevendo dados do projeto",
     summary: {
+      mass_change: "Gravação em massa detectada. Confirme.",
+      mass_items: "Itens no lote: {count}",
+      same_dst: "Mesma tradução: {count}",
       files: "{count} arquivos",
       pages: "Dados de páginas: {count} páginas",
       items: "Dados de entradas: {count} entradas",

@@ -213,6 +213,8 @@ export const AGENT_WORKSPACE_PROJECT_META_SCHEMA = Type.Object(
                 reason: Type.String(),
                 app_version: Type.String(),
                 size: Type.Integer({ minimum: 0 }),
+                anchor: Type.Optional(Type.Boolean()),
+                protect: Type.Optional(Type.Boolean()),
               },
               { additionalProperties: false },
             ),

@@ -27,6 +27,12 @@ export type ProjectSnapshot = Readonly<{
   reason: ProjectSnapshotReason;
   app_version: string;
   size: number;
+  kind: "full"; // 当前实现只写 full；字段为后续 incremental 预留。
+  project_hash: string; // 只覆盖工程表，不含 Agent 聊天/SDK。
+  fingerprint: string; // 修订与 updated_at 的廉价指纹。
+  anchor: boolean; // 当前任务的保护锚点。
+  protect: boolean; // 当前任务的预脚本/预提交保护点。
+  task: string | null; // 产生该点的任务身份。
 }>;
 
 export type ProjectSnapshotDescription = Readonly<{
@@ -34,6 +40,13 @@ export type ProjectSnapshotDescription = Readonly<{
   limit: number;
   latest: ProjectSnapshot | null;
   count: number;
+}>;
+
+export type ProjectSnapshotCreateOptions = Readonly<{
+  task?: string | null;
+  protect?: boolean;
+  anchor?: boolean;
+  dedup?: boolean;
 }>;
 
 type SnapshotManifest = {
@@ -48,17 +61,17 @@ const FILE_SUFFIX = ".lg";
 
 /**
  * 工程自动快照。写入 `userdata/backups/projects/<nome>-<hash8>/`，
- * 用 `VACUUM INTO` 生成包含 WAL 的一致性副本，并在保留数量超出后删除最旧的快照。
+ * 用 `VACUUM INTO` 生成包含 WAL 的一致性副本。
  *
+ * 当前使用 full 快照作为恢复点；任务锚点和预脚本保护点不会被普通数量限制删除。
  * 该服务不取得运行门禁；调用方必须已在项目写或 Agent 写租约内。
  */
 export class ProjectSnapshotService {
   private readonly queues = new Map<string, Promise<void>>(); // 同一工程的 manifest 写入串行。
-  private readonly round_snapshots = new Map<string, string>(); // 每轮 workspace_run 只备份一次。
 
   public constructor(
     private readonly paths: Pick<AppPathService, "get_user_data_path">,
-    private readonly database: Pick<ProjectDatabase, "export_snapshot">,
+    private readonly database: Pick<ProjectDatabase, "export_snapshot" | "read_project_state">,
     private readonly settings: Pick<AppSettingService, "read_setting">,
     private readonly metadata: Pick<AppMetadataService, "read_version_or_default">,
     private readonly log_manager: Pick<LogManager, "warning">,
@@ -73,57 +86,110 @@ export class ProjectSnapshotService {
       : 0;
   }
 
-  /** 创建快照；关闭时返回 null。失败抛出 project.snapshot_failed，调用方应中止风险操作。 */
+  /** 创建 full 快照；关闭时返回 null。失败抛出 project.snapshot_failed。 */
   public async create(
     project_path: string,
     reason: ProjectSnapshotReason,
+    options: ProjectSnapshotCreateOptions = {},
   ): Promise<ProjectSnapshot | null> {
     if (!this.enabled) return null;
     const limit = this.current_limit();
     if (limit <= 0) return null;
+
+    const state = await this.database.read_project_state(project_path);
     const directory = this.directory(project_path);
-    const created_at = new Date().toISOString();
-    const file = `${created_at.replace(/[:.]/g, "-")}_${reason}${FILE_SUFFIX}`;
-    const target_path = path.join(directory, file);
-    const temporary_path = `${target_path}.tmp`;
-    try {
-      this.native_fs.make_dir(directory);
-      await this.database.export_snapshot(project_path, temporary_path);
-      this.native_fs.rename(temporary_path, target_path);
-    } catch (error) {
-      this.remove_best_effort(temporary_path);
-      throw new AppError("project.snapshot_failed", {
-        message:
-          "The project could not be backed up, so the operation was cancelled to protect your translations.",
-        cause: error,
-        diagnostic_context: { operation: "create_snapshot", reason },
-      });
-    }
-    const snapshot: ProjectSnapshot = {
-      file,
-      created_at,
-      reason,
-      app_version: this.metadata.read_version_or_default(),
-      size: this.native_fs.stat(target_path).size,
-    };
+    this.native_fs.make_dir(directory);
+
+    let created: ProjectSnapshot | null = null;
     await this.serialize(directory, async () => {
-      await this.write_manifest(project_path, directory, limit);
+      let snapshots = await this.list(project_path);
+      const task = options.task ?? null;
+      // 新任务开始时释放上一个任务的锚点/保护点，旧文件仍进入普通保留池。
+      if (task !== null) {
+        snapshots = snapshots.map((snapshot) =>
+          snapshot.task !== null && snapshot.task !== task
+            ? { ...snapshot, anchor: false, protect: false }
+            : snapshot,
+        );
+      }
+
+      const duplicate =
+        options.dedup === false
+          ? undefined
+          : snapshots.find(
+              (snapshot) =>
+                snapshot.kind === "full" &&
+                snapshot.project_hash !== "" &&
+                snapshot.project_hash === state.project_hash,
+            );
+      const has_anchor = snapshots.some(
+        (snapshot) => task !== null && snapshot.task === task && snapshot.anchor,
+      );
+      const anchor = options.anchor === true || (task !== null && !has_anchor);
+      const protect = options.protect === true || anchor;
+
+      if (duplicate !== undefined) {
+        const promoted: ProjectSnapshot = {
+          ...duplicate,
+          task: task ?? duplicate.task,
+          anchor: duplicate.anchor || anchor,
+          protect: duplicate.protect || protect,
+        };
+        snapshots = snapshots.map((snapshot) =>
+          snapshot.file === duplicate.file ? promoted : snapshot,
+        );
+        await this.write_manifest(project_path, directory, snapshots, limit);
+        created = promoted;
+        return;
+      }
+
+      const created_at = new Date().toISOString();
+      const file = `${created_at.replace(/[:.]/g, "-")}_${reason}${FILE_SUFFIX}`;
+      const target_path = path.join(directory, file);
+      const temporary_path = `${target_path}.tmp`;
+      try {
+        await this.database.export_snapshot(project_path, temporary_path);
+        this.native_fs.rename(temporary_path, target_path);
+      } catch (error) {
+        this.remove_best_effort(temporary_path);
+        throw new AppError("project.snapshot_failed", {
+          message:
+            "The project could not be backed up, so the operation was cancelled to protect your translations.",
+          cause: error,
+          diagnostic_context: { operation: "create_snapshot", reason },
+        });
+      }
+      const snapshot: ProjectSnapshot = {
+        file,
+        created_at,
+        reason,
+        app_version: this.metadata.read_version_or_default(),
+        size: this.native_fs.stat(target_path).size,
+        kind: "full",
+        project_hash: state.project_hash,
+        fingerprint: state.fingerprint,
+        anchor,
+        protect,
+        task,
+      };
+      snapshots = [snapshot, ...snapshots];
+      await this.write_manifest(project_path, directory, snapshots, limit);
+      created = snapshot;
     });
-    return snapshot;
+    return created;
   }
 
-  /** 每个 Agent 轮次只备份一次脚本前状态；workspace_apply 仍会单独备份。 */
-  public async create_for_round(
+  /** 每个 workspace_run 前保存 full 预脚本点；同内容去重并保护当前任务。 */
+  public create_for_run(
     project_path: string,
-    round_id: string | null,
+    task_token: string,
     reason: ProjectSnapshotReason,
   ): Promise<ProjectSnapshot | null> {
-    if (round_id === null) return await this.create(project_path, reason);
-    const key = resolve_project_file_identity(project_path, this.native_fs);
-    if (this.round_snapshots.get(key) === round_id) return null;
-    const snapshot = await this.create(project_path, reason);
-    if (snapshot !== null) this.round_snapshots.set(key, round_id);
-    return snapshot;
+    return this.create(project_path, reason, {
+      task: task_token,
+      protect: true,
+      dedup: true,
+    });
   }
 
   /** 读取当前工程快照，manifest 丢失时回退到目录扫描。 */
@@ -145,6 +211,12 @@ export class ProjectSnapshotService {
           reason: read_reason(entry.name),
           app_version: "",
           size: stat.size,
+          kind: "full",
+          project_hash: "",
+          fingerprint: "",
+          anchor: false,
+          protect: false,
+          task: null,
         });
       }
     }
@@ -167,8 +239,7 @@ export class ProjectSnapshotService {
   /** 快照版本必须与当前应用一致；旧版本快照仍可用完整 `.lg` 手动恢复。 */
   public is_compatible(snapshot: ProjectSnapshot): boolean {
     return (
-      snapshot.app_version === "" ||
-      snapshot.app_version === this.metadata.read_version_or_default()
+      snapshot.app_version === "" || snapshot.app_version === this.metadata.read_version_or_default()
     );
   }
 
@@ -199,6 +270,12 @@ export class ProjectSnapshotService {
       reason: read_reason(file),
       app_version: "",
       size: this.native_fs.stat(file_path).size,
+      kind: "full",
+      project_hash: "",
+      fingerprint: "",
+      anchor: false,
+      protect: false,
+      task: null,
     };
     return { snapshot, file_path };
   }
@@ -207,31 +284,38 @@ export class ProjectSnapshotService {
   public directory(project_path: string): string {
     const identity = resolve_project_file_identity(project_path, this.native_fs);
     const hash = createHash("sha256").update(identity).digest("hex").slice(0, 8);
-    const base =
-      sanitize_name(path.basename(project_path, path.extname(project_path))) || "project";
+    const base = sanitize_name(path.basename(project_path, path.extname(project_path))) || "project";
     return this.paths.get_user_data_path(...BACKUP_ROOT, `${base}-${hash}`);
   }
 
+  /** 保留 limit 个未保护 full；锚点和保护点永不因数量被删。 */
   private async write_manifest(
     project_path: string,
     directory: string,
+    snapshots: readonly ProjectSnapshot[],
     limit: number,
   ): Promise<void> {
-    const manifest = this.read_manifest(directory) ?? {
-      project_path,
-      project_identity: resolve_project_file_identity(project_path, this.native_fs),
-      snapshots: [],
-    };
-    const snapshots = await this.list(project_path);
-    const kept = snapshots.slice(0, limit);
+    const sorted = [...snapshots].sort((left, right) =>
+      right.created_at.localeCompare(left.created_at),
+    );
+    const protected_snapshots = sorted.filter((snapshot) => snapshot.anchor || snapshot.protect);
+    const unprotected = sorted.filter((snapshot) => !snapshot.anchor && !snapshot.protect);
+    const kept = [
+      ...protected_snapshots,
+      ...unprotected.slice(0, Math.max(0, limit - protected_snapshots.length)),
+    ].sort((left, right) => right.created_at.localeCompare(left.created_at));
     const kept_names = new Set(kept.map((snapshot) => snapshot.file));
-    for (const snapshot of snapshots) {
-      if (!kept_names.has(snapshot.file))
+    for (const snapshot of sorted) {
+      if (!kept_names.has(snapshot.file)) {
         this.remove_best_effort(path.join(directory, snapshot.file));
+      }
     }
+    const manifest = this.read_manifest(directory);
     const next_manifest: SnapshotManifest = {
       project_path,
-      project_identity: manifest.project_identity,
+      project_identity:
+        manifest?.project_identity ??
+        resolve_project_file_identity(project_path, this.native_fs),
       snapshots: kept,
     };
     try {
@@ -252,7 +336,9 @@ export class ProjectSnapshotService {
       if (typeof value !== "object" || value === null) return null;
       const record = value as Record<string, unknown>;
       if (!Array.isArray(record["snapshots"])) return null;
-      const snapshots = record["snapshots"].filter(is_project_snapshot);
+      const snapshots = record["snapshots"]
+        .map(normalize_snapshot)
+        .filter((snapshot): snapshot is ProjectSnapshot => snapshot !== null);
       return {
         project_path: typeof record["project_path"] === "string" ? record["project_path"] : "",
         project_identity:
@@ -307,14 +393,35 @@ function read_reason(file: string): ProjectSnapshotReason {
   return (match?.[1] as ProjectSnapshotReason | undefined) ?? "manual";
 }
 
-function is_project_snapshot(value: unknown): value is ProjectSnapshot {
-  if (typeof value !== "object" || value === null) return false;
+/** 旧 manifest 没有新字段时按 full、无保护点读取，避免升级后丢失恢复入口。 */
+function normalize_snapshot(value: unknown): ProjectSnapshot | null {
+  if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
-  return (
-    typeof record["file"] === "string" &&
-    typeof record["created_at"] === "string" &&
-    typeof record["reason"] === "string" &&
-    typeof record["app_version"] === "string" &&
-    typeof record["size"] === "number"
-  );
+  if (
+    typeof record["file"] !== "string" ||
+    typeof record["created_at"] !== "string" ||
+    typeof record["reason"] !== "string" ||
+    typeof record["app_version"] !== "string" ||
+    typeof record["size"] !== "number"
+  ) {
+    return null;
+  }
+  const file = record["file"];
+  const reason = PROJECT_SNAPSHOT_REASONS.includes(record["reason"] as ProjectSnapshotReason)
+    ? (record["reason"] as ProjectSnapshotReason)
+    : read_reason(file);
+  return {
+    file,
+    created_at: record["created_at"],
+    reason,
+    app_version: record["app_version"],
+    size: record["size"],
+    kind: "full",
+    project_hash: typeof record["project_hash"] === "string" ? record["project_hash"] : "",
+    fingerprint: typeof record["fingerprint"] === "string" ? record["fingerprint"] : "",
+    anchor: record["anchor"] === true,
+    protect: record["protect"] === true,
+    task: typeof record["task"] === "string" ? record["task"] : null,
+  };
 }
+

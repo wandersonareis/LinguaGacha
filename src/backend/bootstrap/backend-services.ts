@@ -44,6 +44,7 @@ import {
 import { RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectLifecycleService } from "../project/project-lifecycle-service";
 import { ProjectSnapshotService } from "../project/project-snapshot-service";
+import { ProjectScheduledBackupService } from "../project/project-scheduled-backup";
 import { ProjectSessionState } from "../project/project-session-state";
 import { ProjectSummaryService } from "../project/project-summary-service";
 import { ProjectTranslationTransferService } from "../project/project-translation-transfer-service";
@@ -157,6 +158,7 @@ export class BackendServices {
   public readonly model: ModelService;
   public readonly batchTranslation: BatchTranslationService;
   public readonly projectSnapshots: ProjectSnapshotService; // 工程自动快照与保留策略
+  public readonly projectScheduledBackup: ProjectScheduledBackupService; // 用户定时 full 备份
   public readonly logManager: LogManager;
   public readonly formats: FormatPluginService;
   public readonly state: BackendServiceState;
@@ -247,6 +249,14 @@ export class BackendServices {
       default_native_fs,
       options.enableProjectSnapshots ?? true,
     );
+    this.projectScheduledBackup = new ProjectScheduledBackupService(
+      options.database,
+      this.app_setting_service,
+      metadata,
+      this.logManager,
+      default_native_fs,
+      options.enableProjectSnapshots ?? true,
+    );
 
     this.task_runtime = new BatchTranslationRuntime(session_state, database, this.runtime_gate);
     const lifecycle = new ProjectLifecycleService(
@@ -263,6 +273,7 @@ export class BackendServices {
       undefined,
       this.game_prepare_worker.run,
       this.projectSnapshots,
+      this.projectScheduledBackup,
     );
     this.work_unit_worker_pool = new TranslationWorkerPool({
       builtinRoot: paths.get_builtin_root(),

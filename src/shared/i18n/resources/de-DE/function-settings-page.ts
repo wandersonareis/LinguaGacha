@@ -19,6 +19,17 @@ export const de_de_function_settings_page = {
       description:
         "Maximale Antwortzeit in Sekunden. Ohne Antwort innerhalb dieser Frist gilt die Aufgabe als fehlgeschlagen.",
     },
+    project_backup_interval_hours: {
+      title: "Benutzer-Backup-Intervall (Stunden)",
+      description:
+        "Speichert bei geöffneter App alle N Stunden eine vollständige Projekt-.lg im Benutzer-Backup-Ordner. Es ist die letzte Rettung und wird nicht automatisch bereinigt; bei geschlossener App wartet es auf den nächsten Start.",
+    },
+    project_backup_directory: {
+      title: "Benutzer-Backup-Ordner",
+      description:
+        "Leer verwendet den .lg-Ordner. Nur die vollständige Projekt-.lg wird kopiert; keine userdata, Skills oder Workspace.",
+      choose: "Ordner wählen",
+    },
     project_snapshot_limit: {
       title: "Automatische Projekt-Snapshots",
       description:
@@ -59,6 +70,9 @@ export const de_de_function_settings_page = {
       "Das Anfrage-Timeout muss eine Zahl innerhalb des gültigen Bereichs sein …",
     project_snapshot_limit_invalid:
       "Die Anzahl automatischer Projekt-Snapshots muss eine ganze Zahl von 0 bis 20 sein …",
+    project_backup_interval_hours_invalid:
+      "Das Benutzer-Backup-Intervall muss eine ganze Zahl von 1 bis 24 sein …",
+    pick_backup_directory_failed: "Auswahl des Backup-Ordners fehlgeschlagen …",
     pick_directory_failed:
       "Ordnerauswahl fehlgeschlagen. Bitte den festen Speicherordner erneut auswählen …",
   },

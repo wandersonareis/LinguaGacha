@@ -62,7 +62,10 @@ export class BatchTranslationService {
     command: BatchTranslationStartCommand,
   ): Promise<BatchTranslationRunHandle> {
     const project_path = this.session.require_loaded_project_path();
-    await this.snapshots?.create(project_path, "before-batch-translation");
+    await this.snapshots?.create(project_path, "before-batch-translation", {
+      task: `batch:${project_path}`,
+      protect: true,
+    });
     // Runner 在异步生命周期内使用独立命令，调用方后续修改不改变已预约范围。
     const run_command: BatchTranslationRunCommand = {
       operation: command.operation,
@@ -109,7 +112,10 @@ export class BatchTranslationService {
       ...(item_statuses === undefined ? {} : { item_statuses }),
       mode: resolve_batch_translation_start_mode(await this.runtime.read_progress()),
     };
-    await this.snapshots?.create(project_path, "before-batch-translation");
+    await this.snapshots?.create(project_path, "before-batch-translation", {
+      task: `batch:${project_path}`,
+      protect: true,
+    });
     const handle = this.runtime.begin_under_agent(lease, signal, command.operation);
     await this.runtime.execute(handle, () =>
       this.runner.run(handle, command, this.read_run_context(model)),

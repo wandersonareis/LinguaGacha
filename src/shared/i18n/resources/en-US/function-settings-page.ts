@@ -19,6 +19,17 @@ export const en_us_function_settings_page = {
       description:
         "Maximum wait for a model reply, in seconds. The task fails if no reply arrives in time.",
     },
+    project_backup_interval_hours: {
+      title: "User backup interval (hours)",
+      description:
+        "While the app is open, saves a complete project .lg to the user backup folder every N hours. It is a last resort and has no automatic cleanup; while closed, it waits for the next launch.",
+    },
+    project_backup_directory: {
+      title: "User backup folder",
+      description:
+        "Empty uses the .lg folder. Only the complete project .lg is copied; no userdata, skills, or workspace.",
+      choose: "Choose folder",
+    },
     project_snapshot_limit: {
       title: "Automatic project snapshots",
       description:
@@ -56,6 +67,9 @@ export const en_us_function_settings_page = {
     request_timeout_invalid: "Request timeout must be a number within the valid range …",
     project_snapshot_limit_invalid:
       "The automatic project snapshot count must be an integer from 0 to 20 …",
+    project_backup_interval_hours_invalid:
+      "The user backup interval must be an integer from 1 to 24 …",
+    pick_backup_directory_failed: "Backup folder selection failed …",
     pick_directory_failed:
       "Directory selection failed. Please choose the fixed save directory again …",
   },

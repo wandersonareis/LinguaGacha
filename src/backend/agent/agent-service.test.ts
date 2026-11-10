@@ -4387,6 +4387,7 @@ describe("AgentService", () => {
     );
     const connections = new Map<string, NodeSqliteDatabase>();
     const database = {
+      read_project_state: async () => ({ fingerprint: "", project_hash: "" }),
       open_agent_store: (project: string) => {
         let connection = connections.get(project);
         if (connection === undefined) {

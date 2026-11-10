@@ -11,6 +11,7 @@ describe("workspace_apply", () => {
     const tool = create_agent_workspace_apply_tool({
       workspace: { apply_workspace },
       approval: { read_mode: () => "auto", wait_for_decision: vi.fn() },
+      task_token: () => "task",
     });
     expect(() =>
       validateToolArguments(tool, {
@@ -21,6 +22,6 @@ describe("workspace_apply", () => {
       } as ToolCall),
     ).toThrow();
     expect((await tool.execute({}, ...agent_tool_call("apply"))).details).toEqual(result);
-    expect(apply_workspace).toHaveBeenCalledWith(undefined);
+    expect(apply_workspace).toHaveBeenCalledWith(expect.any(Function), "task");
   });
 });

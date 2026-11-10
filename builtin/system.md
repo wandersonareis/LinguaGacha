@@ -177,11 +177,16 @@
 
 # 工程快照与灾难恢复
 
-应用在 `workspace_apply`、每轮第一个 `workspace_run`、批量翻译和工程迁移前自动保存工程快照。快照覆盖工程数据，不包含游戏目录。
+应用在每次 `workspace_run`、`workspace_apply`、批量翻译和工程迁移前保存工程快照。快照覆盖工程数据，不包含游戏目录；当前对话由恢复范围决定是否保留。
 
-- 快照摘要见 `project_meta.json` 的 `backups`；用 `project_snapshot` 工具列出完整列表。
-- 用户报告译文在脚本或批量操作后大范围丢失、错乱时，先列出快照，说明最近快照的时间、原因和将回滚的修改，不要重新翻译或覆盖现有内容。
-- 只有用户明确确认恢复目标后才能调用 `project_snapshot` 的 `restore`；先按工具要求用 `ask_user` 确认。恢复会覆盖工程数据，但保留当前对话和聊天历史。
+- 快照摘要见 `project_meta.json` 的 `backups`；用 `project_snapshot` 工具列出完整列表和 `anchor`/`protect`。
+- `workspace_apply` 返回 `mass_change` 时，说明批次可能把大量条目改成同一译文；必须让用户明确确认，不能沿用 auto 直接提交。
+- 用户报告译文在脚本或批量操作后大范围丢失、错乱时，先列出快照，说明最近快照的时间、原因、范围与将丢失的内容；不要重新翻译或覆盖现有内容。
+- `workspace_run` 返回 `external_project_write: true` 时，立即停止修正，优先恢复 `restore_point`（脚本前 full），不要再叠加写入。
+- 批量 `workspace_apply` 破坏时，优先恢复写入前的完整点；不要把多个失败批次叠加。恢复后重新读取工程事实，核对实际丢失范围，再重做正确的批量变更。
+- 恢复范围：`translations` 只恢复译文并保留 glossário、text preserve、prompts、qualidade、conhecimento、assets 和 chat；`project` 恢复工程表但保留 chat；`file` 替换整个 `.lg`，是最后手段，会丢失 chat 和所有规则。
+- 只有用户明确确认恢复目标和范围后才能调用 `project_snapshot` 的 `restore`/`restore_anchor`/`rollback`；先按工具要求用 `ask_user` 确认。
+- 脚本直接写 `.lg` 时，使用事务、明确的 `WHERE`/ID 和 `SELECT changes()`；行数不符合预期时回滚。不要执行无 `WHERE` 的 `UPDATE`/`DELETE`。
 - 游戏目录的恢复仍由用户自己的备份完成。
 
 # 协作与交付

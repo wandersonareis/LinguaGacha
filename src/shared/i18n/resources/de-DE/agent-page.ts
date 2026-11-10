@@ -106,6 +106,9 @@ export const de_de_agent_page = {
     tooltip: "Genehmigungsmodus für Schreibzugriffe",
     title: "Projektdaten werden geschrieben",
     summary: {
+      mass_change: "Massenschreibvorgang erkannt. Bitte bestätigen.",
+      mass_items: "Einträge im Stapel: {count}",
+      same_dst: "Gleiche Übersetzung: {count}",
       files: "{count} Dateien",
       pages: "Seitendaten: {count} Seiten",
       items: "Eintragsdaten: {count} Einträge",

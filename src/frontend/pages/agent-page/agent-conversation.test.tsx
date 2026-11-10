@@ -1163,6 +1163,9 @@ describe("AgentConversation", () => {
         files: 0,
         knowledge: 0,
         prompts: 0,
+        mass_change: 0,
+        mass_items: 0,
+        same_dst: 0,
       },
     };
     const input: AgentInputState = {
