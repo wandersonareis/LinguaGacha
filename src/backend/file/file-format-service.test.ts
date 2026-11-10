@@ -808,3 +808,34 @@ it("FFX PO 导出译文并保留未处理条目的原 msgstr", async () => {
   expect(text).toContain('msgstr "New text"');
   expect(text).toContain('msgstr "Precisa de ajuda?"');
 });
+
+it.each([false, true])("视频资产只输出写回输入，空记录=%s", async (empty) => {
+  using temp = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-video-export-"));
+  const service = create_service();
+  const records = empty ? [] : [{ message: "原文", start: 0, end: 2, kind: "dialogue" }];
+  const content = await write_zip(new Map([["items.json", JSON.stringify(records)]]));
+  const parsed = await service.parse_asset("movie.media", content);
+  expect(parsed).toMatchObject({ kind: "items", file_type: "MEDIA" });
+  if (parsed.kind !== "items") throw new Error("Expected items");
+  expect(parsed.items.map((item) => [item.src, item.row, item.file_type])).toEqual(
+    empty ? [] : [["原文", 0, "MEDIA"]],
+  );
+  const paths = {
+    translated_path: path.join(temp.path, "translated"),
+    bilingual_path: path.join(temp.path, "bilingual"),
+  };
+  const generic_path = path.join(temp.path, "generic");
+  await service.write_items(
+    parsed.items.map((item) => ({ ...item, dst: "译文", status: "PROCESSED" })),
+    {
+      paths,
+      source_files: [{ path: "movie.media", file_type: "MEDIA" }],
+      asset_reader: () => Buffer.from(content),
+    },
+    generic_path,
+  );
+  expect(fs.existsSync(paths.translated_path)).toBe(false);
+  expect(
+    JSON.parse(fs.readFileSync(path.join(generic_path, "movie.media/items.json"), "utf8")),
+  ).toEqual(records.map((record) => ({ ...record, message: "译文" })));
+});

@@ -43,6 +43,7 @@ export const ITEM_FILE_TYPES = [
   "FFX_STRINGS",
   "FFX_PO",
   "GENERIC",
+  "MEDIA",
 ] as const;
 /** 内置格式身份；插件格式使用同形大写标识并随工程持久化。 */
 export type BuiltinItemFileType = (typeof ITEM_FILE_TYPES)[number];
