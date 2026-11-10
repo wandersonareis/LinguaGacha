@@ -9,6 +9,13 @@ import { NativeFs, default_native_fs } from "../../native/native-fs";
 import { AppError } from "../../shared/error";
 import { normalize_project_snapshot_limit } from "../../domain/setting";
 import { resolve_project_file_identity } from "./project-file-lock";
+import {
+  PROJECT_SNAPSHOT_ARCHIVE_SUFFIX,
+  PROJECT_SNAPSHOT_SUFFIX,
+  is_project_snapshot_file,
+  project_snapshot_reason_from_file,
+  write_project_snapshot_archive,
+} from "./project-snapshot-archive";
 
 export const PROJECT_SNAPSHOT_REASONS = [
   "manual",
@@ -57,7 +64,6 @@ type SnapshotManifest = {
 
 const MANIFEST_FILE = "manifest.json";
 const BACKUP_ROOT = ["backups", "projects"] as const;
-const FILE_SUFFIX = ".lg";
 
 /**
  * 工程自动快照。写入 `userdata/backups/projects/<nome>-<hash8>/`，
@@ -103,6 +109,7 @@ export class ProjectSnapshotService {
     let created: ProjectSnapshot | null = null;
     await this.serialize(directory, async () => {
       let snapshots = await this.list(project_path);
+      snapshots = await this.compact_legacy(project_path, directory, snapshots);
       const task = options.task ?? null;
       // 新任务开始时释放上一个任务的锚点/保护点，旧文件仍进入普通保留池。
       if (task !== null) {
@@ -144,14 +151,23 @@ export class ProjectSnapshotService {
       }
 
       const created_at = new Date().toISOString();
-      const file = `${created_at.replace(/[:.]/g, "-")}_${reason}${FILE_SUFFIX}`;
+      const file = `${created_at.replace(/[:.]/g, "-")}_${reason}${PROJECT_SNAPSHOT_ARCHIVE_SUFFIX}`;
       const target_path = path.join(directory, file);
-      const temporary_path = `${target_path}.tmp`;
+      const temporary_lg_path = `${target_path}.tmp.lg`;
+      const temporary_archive_path = `${target_path}.tmp`;
       try {
-        await this.database.export_snapshot(project_path, temporary_path);
-        this.native_fs.rename(temporary_path, target_path);
+        await this.database.export_snapshot(project_path, temporary_lg_path);
+        await write_project_snapshot_archive(
+          this.native_fs,
+          temporary_lg_path,
+          temporary_archive_path,
+        );
+        this.native_fs.rename(temporary_archive_path, target_path);
+        this.remove_best_effort(temporary_lg_path);
+        this.remove_best_effort(temporary_archive_path);
       } catch (error) {
-        this.remove_best_effort(temporary_path);
+        this.remove_best_effort(temporary_lg_path);
+        this.remove_best_effort(temporary_archive_path);
         throw new AppError("project.snapshot_failed", {
           message:
             "The project could not be backed up, so the operation was cancelled to protect your translations.",
@@ -201,14 +217,22 @@ export class ProjectSnapshotService {
     );
     if (this.native_fs.exists(directory)) {
       for (const entry of this.native_fs.read_dirents(directory)) {
-        if (!entry.isFile() || !entry.name.endsWith(FILE_SUFFIX) || snapshots.has(entry.name))
+        if (
+          !entry.isFile() ||
+          entry.name.startsWith(".") ||
+          entry.name.includes(".tmp") ||
+          !is_project_snapshot_file(entry.name) ||
+          snapshots.has(entry.name)
+        )
           continue;
         const file_path = path.join(directory, entry.name);
         const stat = this.native_fs.stat(file_path);
         snapshots.set(entry.name, {
           file: entry.name,
           created_at: new Date(stat.mtimeMs).toISOString(),
-          reason: read_reason(entry.name),
+          reason:
+            (project_snapshot_reason_from_file(entry.name) as ProjectSnapshotReason | null) ??
+            "manual",
           app_version: "",
           size: stat.size,
           kind: "full",
@@ -223,6 +247,40 @@ export class ProjectSnapshotService {
     return [...snapshots.values()]
       .filter((snapshot) => this.native_fs.exists(path.join(directory, snapshot.file)))
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
+  }
+
+  /** 旧版未压缩 `.lg` 在第一次写入快照时转为 `.lg.zip`；失败保留旧文件。 */
+  private async compact_legacy(
+    project_path: string,
+    directory: string,
+    snapshots: readonly ProjectSnapshot[],
+  ): Promise<ProjectSnapshot[]> {
+    let changed = false;
+    const next: ProjectSnapshot[] = [];
+    for (const snapshot of snapshots) {
+      if (!snapshot.file.endsWith(PROJECT_SNAPSHOT_SUFFIX)) {
+        next.push(snapshot);
+        continue;
+      }
+      const source_path = path.join(directory, snapshot.file);
+      const target_file = `${snapshot.file}.zip`;
+      const target_path = path.join(directory, target_file);
+      try {
+        if (this.native_fs.exists(target_path)) {
+          next.push(snapshot);
+          continue;
+        }
+        await write_project_snapshot_archive(this.native_fs, source_path, target_path);
+        this.remove_best_effort(source_path);
+        next.push({ ...snapshot, file: target_file, size: this.native_fs.stat(target_path).size });
+        changed = true;
+      } catch (error) {
+        this.report_warning("compact_legacy_snapshot", error);
+        next.push(snapshot);
+      }
+    }
+    if (changed) await this.write_manifest(project_path, directory, next, this.current_limit());
+    return next;
   }
 
   /** 提供给工作区 project_meta.json 的 Agent 可读摘要。 */
@@ -252,7 +310,7 @@ export class ProjectSnapshotService {
       typeof file !== "string" ||
       file === "" ||
       path.basename(file) !== file ||
-      !file.endsWith(FILE_SUFFIX) ||
+      !is_project_snapshot_file(file) ||
       file.includes("\0") ||
       file.startsWith(".")
     ) {
@@ -267,7 +325,8 @@ export class ProjectSnapshotService {
     const snapshot = manifest?.snapshots.find((entry) => entry.file === file) ?? {
       file,
       created_at: new Date(this.native_fs.stat(file_path).mtimeMs).toISOString(),
-      reason: read_reason(file),
+      reason:
+        (project_snapshot_reason_from_file(file) as ProjectSnapshotReason | null) ?? "manual",
       app_version: "",
       size: this.native_fs.stat(file_path).size,
       kind: "full",
@@ -385,14 +444,6 @@ function sanitize_name(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 40);
 }
 
-function read_reason(file: string): ProjectSnapshotReason {
-  const match =
-    /_(before-agent-apply|before-workspace-run|before-batch-translation|before-project-migration|before-restore|manual)\.lg$/u.exec(
-      file,
-    );
-  return (match?.[1] as ProjectSnapshotReason | undefined) ?? "manual";
-}
-
 /** 旧 manifest 没有新字段时按 full、无保护点读取，避免升级后丢失恢复入口。 */
 function normalize_snapshot(value: unknown): ProjectSnapshot | null {
   if (typeof value !== "object" || value === null) return null;
@@ -409,7 +460,7 @@ function normalize_snapshot(value: unknown): ProjectSnapshot | null {
   const file = record["file"];
   const reason = PROJECT_SNAPSHOT_REASONS.includes(record["reason"] as ProjectSnapshotReason)
     ? (record["reason"] as ProjectSnapshotReason)
-    : read_reason(file);
+    : ((project_snapshot_reason_from_file(file) as ProjectSnapshotReason | null) ?? "manual");
   return {
     file,
     created_at: record["created_at"],

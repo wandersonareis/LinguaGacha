@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppPathService } from "../app/app-path-service";
 import { ProjectDatabase } from "../database/database-operations";
+import { default_native_fs } from "../../native/native-fs";
+import { materialize_project_snapshot } from "./project-snapshot-archive";
 import { ProjectSnapshotService } from "./project-snapshot-service";
 
 describe("ProjectSnapshotService", () => {
@@ -29,6 +31,7 @@ describe("ProjectSnapshotService", () => {
       });
       const third = await service.create(project, "before-restore");
       expect(first).not.toBeNull();
+      expect(first!.file).toMatch(/\.lg\.zip$/u);
       expect(second).not.toBeNull();
       expect(third).not.toBeNull();
 
@@ -77,6 +80,30 @@ describe("ProjectSnapshotService", () => {
     }
   });
 
+  it("旧版未压缩 .lg 快照在下次创建时转为 .lg.zip", async () => {
+    using temp = create_temp();
+    const database = new ProjectDatabase("1.2.3");
+    const project = await create_project(database, temp.path);
+    const service = create_service(temp.path, create_settings(5), database);
+    try {
+      const directory = service.directory(project);
+      fs.mkdirSync(directory, { recursive: true });
+      const legacy_name = "2026-01-01T00-00-00-000Z_manual.lg";
+      fs.copyFileSync(project, path.join(directory, legacy_name));
+      expect((await service.list(project)).map((snapshot) => snapshot.file)).toContain(
+        legacy_name,
+      );
+
+      await service.create(project, "manual");
+
+      const files = (await service.list(project)).map((snapshot) => snapshot.file);
+      expect(files).not.toContain(legacy_name);
+      expect(files).toContain(`${legacy_name}.zip`);
+    } finally {
+      await database.close();
+    }
+  });
+
   it("恢复只覆盖工程数据，保留当前 Agent 对话", async () => {
     using temp = create_temp();
     const database = new ProjectDatabase("1.2.3");
@@ -100,7 +127,17 @@ describe("ProjectSnapshotService", () => {
       });
 
       const resolved = service.resolve(project, snapshot!.file);
-      await database.restore_project_tables(project, resolved.file_path);
+      expect(resolved.file_path).toBe(path.join(service.directory(project), snapshot!.file));
+      expect(resolved.file_path).toMatch(/\.lg\.zip$/u);
+      const materialized = await materialize_project_snapshot(
+        default_native_fs,
+        resolved.file_path,
+      );
+      try {
+        await database.restore_project_tables(project, materialized.path);
+      } finally {
+        materialized.cleanup();
+      }
 
       const items = await database.get_all_items(project);
       expect(items[0]?.["dst"]).toBe("Old");

@@ -40,6 +40,7 @@ describe("ProjectScheduledBackupService", () => {
     try {
       const first = await service.create_if_due(project);
       expect(first).not.toBeNull();
+      expect(first!.file).toMatch(/\.lg\.zip$/u);
       expect((await service.list(project)).map((entry) => entry.file)).toContain(first!.file);
       expect(await service.describe(project)).toMatchObject({
         count: 1,

@@ -71,6 +71,7 @@ import {
 import type { RuntimeLease, RuntimeOperationGate } from "../runtime-operation-gate";
 import { ProjectSessionState } from "./project-session-state";
 import { ProjectFileLock, resolve_project_file_identity } from "./project-file-lock";
+import { materialize_project_snapshot } from "./project-snapshot-archive";
 import type { ProjectSnapshotService } from "./project-snapshot-service";
 import type { ProjectScheduledBackupService } from "./project-scheduled-backup";
 import type { ProjectWriteStore } from "./project-write-store";
@@ -718,63 +719,68 @@ export class ProjectLifecycleService {
       });
     }
     const safety = await snapshots.create(project_path, "before-restore");
-    if (scope === "file") {
-      const temporary_path = path.join(
-        path.dirname(project_path),
-        `.${randomUUID()}.restore.tmp`,
-      );
-      try {
-        this.native_fs.copy_file(file_path, temporary_path);
-        await this.database.close_project(project_path);
-        await this.database.replace_project_file(temporary_path, project_path);
-        await this.database.prepare(project_path);
-        const reloaded = await this.database.read(project_path, (reader) =>
-          new ProjectDataReader(reader).read_snapshot(project_path),
+    const materialized = await materialize_project_snapshot(this.native_fs, file_path);
+    try {
+      if (scope === "file") {
+        const temporary_path = path.join(
+          path.dirname(project_path),
+          `.${randomUUID()}.restore.tmp`,
         );
-        this.cache.clearProject(project_path);
-        this.cache.installProject(project_path, reloaded);
-        await this.session_state.mark_loaded(project_path);
-        return {
-          restored: snapshot_file,
-          safety_snapshot: safety?.file ?? null,
-          scope,
-          project: { path: project_path, loaded: true },
-          section_revisions: reloaded.section_revisions,
-        };
-      } finally {
         try {
-          this.native_fs.unlink(temporary_path, { force: true });
-        } catch {
-          // 替换成功后临时副本已不存在；清理失败不影响已提交的工程文件。
+          this.native_fs.copy_file(materialized.path, temporary_path);
+          await this.database.close_project(project_path);
+          await this.database.replace_project_file(temporary_path, project_path);
+          await this.database.prepare(project_path);
+          const reloaded = await this.database.read(project_path, (reader) =>
+            new ProjectDataReader(reader).read_snapshot(project_path),
+          );
+          this.cache.clearProject(project_path);
+          this.cache.installProject(project_path, reloaded);
+          await this.session_state.mark_loaded(project_path);
+          return {
+            restored: snapshot_file,
+            safety_snapshot: safety?.file ?? null,
+            scope,
+            project: { path: project_path, loaded: true },
+            section_revisions: reloaded.section_revisions,
+          };
+        } finally {
+          try {
+            this.native_fs.unlink(temporary_path, { force: true });
+          } catch {
+            // 替换成功后临时副本已不存在；清理失败不影响已提交的工程文件。
+          }
         }
       }
-    }
 
-    await this.database.restore_project_tables(project_path, file_path, scope);
-    await this.database.transaction(project_path, (writer) => {
-      writer.bump_section_revisions(
-        project_path,
-        scope === "translations" ? ["items"] : ["files", "items"],
-      );
-      writer.set_meta(project_path, "updated_at", this.build_timestamp());
-    });
-    let change;
-    try {
-      change = await this.write_store.notify_project_restored(project_path);
-    } catch (cause) {
-      throw new AppErrors.AppError("data.committed_sync_failed", {
-        cause,
-        public_details: { committed: true, action: "reload_project" },
-        diagnostic_context: { operation: "restore_snapshot_after_commit" },
+      await this.database.restore_project_tables(project_path, materialized.path, scope);
+      await this.database.transaction(project_path, (writer) => {
+        writer.bump_section_revisions(
+          project_path,
+          scope === "translations" ? ["items"] : ["files", "items"],
+        );
+        writer.set_meta(project_path, "updated_at", this.build_timestamp());
       });
+      let change;
+      try {
+        change = await this.write_store.notify_project_restored(project_path);
+      } catch (cause) {
+        throw new AppErrors.AppError("data.committed_sync_failed", {
+          cause,
+          public_details: { committed: true, action: "reload_project" },
+          diagnostic_context: { operation: "restore_snapshot_after_commit" },
+        });
+      }
+      return {
+        restored: snapshot_file,
+        safety_snapshot: safety?.file ?? null,
+        scope,
+        project: { path: project_path, loaded: true },
+        section_revisions: change.sectionRevisions,
+      };
+    } finally {
+      materialized.cleanup();
     }
-    return {
-      restored: snapshot_file,
-      safety_snapshot: safety?.file ?? null,
-      scope,
-      project: { path: project_path, loaded: true },
-      section_revisions: change.sectionRevisions,
-    };
   }
 
   /** rollback 恢复最近一个非安全快照；默认只恢复翻译，适合单次 apply/批量写入。 */

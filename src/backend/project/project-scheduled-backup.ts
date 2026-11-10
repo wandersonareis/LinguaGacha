@@ -8,6 +8,12 @@ import { NativeFs, default_native_fs } from "../../native/native-fs";
 import { AppError } from "../../shared/error";
 import { normalize_project_backup_interval_hours } from "../../domain/setting";
 import { resolve_project_file_identity } from "./project-file-lock";
+import {
+  PROJECT_SNAPSHOT_ARCHIVE_SUFFIX,
+  PROJECT_SNAPSHOT_SUFFIX,
+  is_project_snapshot_file,
+  write_project_snapshot_archive,
+} from "./project-snapshot-archive";
 
 export type ScheduledProjectBackup = Readonly<{
   file: string;
@@ -32,7 +38,6 @@ type ScheduledManifest = {
 };
 
 const MANIFEST_FILE = "manifest.json";
-const FILE_SUFFIX = ".lg";
 
 /**
  * 用户控制的定时 full 备份。它是最后手段：只保存完整 `.lg`，不做增量、不做自动删除，
@@ -58,7 +63,11 @@ export class ProjectScheduledBackupService {
     const directory = this.directory(project_path);
     try {
       this.native_fs.make_dir(directory);
-      const entries = this.list_entries(directory);
+      const entries = await this.compact_legacy(
+        project_path,
+        directory,
+        this.list_entries(directory),
+      );
       const latest = entries[0];
       if (
         latest !== undefined &&
@@ -71,15 +80,21 @@ export class ProjectScheduledBackupService {
         return null;
       }
       const created_at = new Date().toISOString();
-      const file = `${created_at.replace(/[:.]/g, "-")}${FILE_SUFFIX}`;
+      const file = `${created_at.replace(/[:.]/g, "-")}${PROJECT_SNAPSHOT_ARCHIVE_SUFFIX}`;
       const target_path = path.join(directory, file);
-      const temporary_path = path.join(directory, `.${randomUUID()}.tmp`);
+      const temporary_lg_path = path.join(directory, `.${randomUUID()}.tmp.lg`);
+      const temporary_archive_path = path.join(directory, `.${randomUUID()}.tmp`);
       try {
-        await this.database.export_snapshot(project_path, temporary_path);
+        await this.database.export_snapshot(project_path, temporary_lg_path);
         const digest = createHash("sha256")
-          .update(this.native_fs.read_file(temporary_path))
+          .update(this.native_fs.read_file(temporary_lg_path))
           .digest("hex");
-        this.native_fs.rename(temporary_path, target_path);
+        await write_project_snapshot_archive(
+          this.native_fs,
+          temporary_lg_path,
+          temporary_archive_path,
+        );
+        this.native_fs.rename(temporary_archive_path, target_path);
         const entry: ScheduledProjectBackup = {
           file,
           created_at,
@@ -110,14 +125,71 @@ export class ProjectScheduledBackupService {
         );
         return entry;
       } catch (error) {
-        this.remove_best_effort(temporary_path);
+        this.remove_best_effort(temporary_lg_path);
+        this.remove_best_effort(temporary_archive_path);
         this.report_warning("create_scheduled_backup", error);
         return null;
+      } finally {
+        this.remove_best_effort(temporary_lg_path);
       }
     } catch (error) {
       this.report_warning("scheduled_backup_directory", error);
       return null;
     }
+  }
+
+  /** 旧版未压缩 `.lg` 在第一次检查时转为 `.lg.zip`；失败保留旧文件。 */
+  private async compact_legacy(
+    project_path: string,
+    directory: string,
+    entries: readonly ScheduledProjectBackup[],
+  ): Promise<ScheduledProjectBackup[]> {
+    let changed = false;
+    const next: ScheduledProjectBackup[] = [];
+    for (const entry of entries) {
+      if (!entry.file.endsWith(PROJECT_SNAPSHOT_SUFFIX)) {
+        next.push(entry);
+        continue;
+      }
+      const source_path = path.join(directory, entry.file);
+      const target_file = `${entry.file}.zip`;
+      const target_path = path.join(directory, target_file);
+      try {
+        if (this.native_fs.exists(target_path)) {
+          next.push(entry);
+          continue;
+        }
+        await write_project_snapshot_archive(this.native_fs, source_path, target_path);
+        this.remove_best_effort(source_path);
+        next.push({ ...entry, file: target_file, size: this.native_fs.stat(target_path).size });
+        changed = true;
+      } catch (error) {
+        this.report_warning("compact_legacy_scheduled_backup", error);
+        next.push(entry);
+      }
+    }
+    if (changed) {
+      const manifest = this.read_manifest(directory) ?? {
+        project_path,
+        project_identity: resolve_project_file_identity(project_path, this.native_fs),
+        entries: [],
+      };
+      this.native_fs.write_file_atomic(
+        path.join(directory, MANIFEST_FILE),
+        JSON.stringify(
+          {
+            ...manifest,
+            project_path,
+            entries: next.sort((left, right) =>
+              right.created_at.localeCompare(left.created_at),
+            ),
+          } satisfies ScheduledManifest,
+          null,
+          2,
+        ),
+      );
+    }
+    return next;
   }
 
   /** 读取用户目录中的备份；manifest 丢失时回退到目录扫描。 */
@@ -127,7 +199,13 @@ export class ProjectScheduledBackupService {
     const by_file = new Map(manifest_entries.map((entry) => [entry.file, entry]));
     if (this.native_fs.exists(directory)) {
       for (const entry of this.native_fs.read_dirents(directory)) {
-        if (!entry.isFile() || !entry.name.endsWith(FILE_SUFFIX) || by_file.has(entry.name))
+        if (
+          !entry.isFile() ||
+          entry.name.startsWith(".") ||
+          entry.name.includes(".tmp") ||
+          !is_project_snapshot_file(entry.name) ||
+          by_file.has(entry.name)
+        )
           continue;
         const file_path = path.join(directory, entry.name);
         const stat = this.native_fs.stat(file_path);
@@ -165,7 +243,7 @@ export class ProjectScheduledBackupService {
       typeof file !== "string" ||
       file === "" ||
       path.basename(file) !== file ||
-      !file.endsWith(FILE_SUFFIX) ||
+      !is_project_snapshot_file(file) ||
       file.includes("\0") ||
       file.startsWith(".")
     ) {
