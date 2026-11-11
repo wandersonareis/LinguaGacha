@@ -1,5 +1,6 @@
 import { create_item, type Item, type ItemFileType } from "../../../domain/item";
 import { JsonTool } from "../../../shared/utils/json-tool";
+import { write_text_file } from "../shared/file-format-helpers";
 import { read_translation_for_generation } from "../shared/translation-generation-text";
 
 /** FFX PO 与其它 FFX 格式共用条目身份，扩展名识别后由内容校验确认。 */
@@ -139,6 +140,16 @@ export function render_po(items: readonly Item[], language: string): string {
     blocks.push(lines.join("\n"));
   }
   return [render_header(language), ...blocks].join("\n\n") + "\n";
+}
+
+/** Grava o artefato PO no diretório de tradução. */
+export async function write_ffx_po(
+  items: readonly Item[],
+  rel_path: string,
+  translated_path: string,
+  language: string,
+): Promise<void> {
+  await write_text_file(`${translated_path}/${rel_path}`, render_po(items, language));
 }
 
 /** 与 FFX Resources 产物同形的 gettext 头，导入时不参与条目构建。 */
