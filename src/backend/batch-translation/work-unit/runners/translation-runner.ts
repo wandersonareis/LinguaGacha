@@ -368,7 +368,11 @@ export class TranslationWorkUnitRunner {
       RT: String(response.reasoning_tokens),
       TIME: ((ended_at - context.start_time) / 1000).toFixed(2),
     });
-    const summary = [stats];
+    // 每条 work-unit 记录服务它的模型，避免只靠任务启动日志定位。
+    const summary = [
+      `${this.t(app_language, "app.log.model_id")} - ${context.request.model.model_id}`,
+      stats,
+    ];
     let level: WorkUnitLogEntry["level"] = "info";
     // 供应商异常和本地超时共用请求失败摘要，结构化 error 仍只承载真实供应商诊断。
     const request_failure_text =

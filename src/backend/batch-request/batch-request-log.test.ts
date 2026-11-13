@@ -10,6 +10,7 @@ function result_log(input: Partial<Parameters<typeof build_batch_request_result_
   return build_batch_request_result_log({
     run_id: "run",
     request_id: "one",
+    model_id: "test-model",
     started_at: Date.now(),
     format: "messages",
     payload: undefined,

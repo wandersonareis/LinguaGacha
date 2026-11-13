@@ -41,6 +41,7 @@ function response_sections(response: JsonRecord, t: TextResolver): LogTextSectio
 export function build_batch_request_result_log(input: {
   run_id: string;
   request_id: string;
+  model_id: string; // 每条请求记录服务它的模型，避免只靠任务启动日志定位
   started_at: number;
   format: "messages" | "responses";
   payload: JsonRecord | undefined;
@@ -78,6 +79,7 @@ export function build_batch_request_result_log(input: {
     ended_at: new Date(ended_at).toISOString(),
     summary: [
       `${input.run_id} / ${input.request_id}`,
+      `${t("app.log.model_id")} - ${input.model_id}`,
       t("app.log.task_stats", {
         COUNT: "1",
         TIME: ((ended_at - input.started_at) / 1000).toFixed(2),

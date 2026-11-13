@@ -716,17 +716,25 @@ export class AgentChat {
         command.requestId = requestId;
         command.conversationId = conversation.id;
       }
-      if (delivery === "round")
+      if (delivery === "round") {
+        // 模型在提交前已由 `configure` 固定，round 记录本次使用的模型供日志与界面展示。
+        const model_id = this.model?.id ?? null;
         state.rounds[requestId] = {
           status: "running",
           checkpoint,
           endedAt: null,
           averageTokensPerSecond: null,
+          modelId: model_id,
         };
+      }
     });
     execution.controller.signal.throwIfAborted();
     if (delivery === "round")
-      this.log.begin_run(execution.roundId, queuedId === null ? "prompt" : "queued");
+      this.log.begin_run(
+        execution.roundId,
+        queuedId === null ? "prompt" : "queued",
+        this.model?.id ?? null,
+      );
     const submission = await conversation.submit(
       {
         type: "input",

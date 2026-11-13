@@ -196,7 +196,7 @@ it("工具执行结束后等待 SDK 提交，日志不能提前结算", async ()
     fauxAssistantMessage([fauxToolCall("fixture_tool", {})], { stopReason: "toolUse" }),
     fauxAssistantMessage("完成"),
   ]);
-  chat.log.begin_run("round", "prompt");
+  chat.log.begin_run("round", "prompt", null);
   const running = talk(chat, "调用工具");
   try {
     await Promise.race([committing.promise, running]);
@@ -503,7 +503,7 @@ it("压缩状态依赖 SDK 任务，重开保留起始时间、身份顺序和�
       });
     expect(compacted.at(-1)!.createdAt).toBeGreaterThanOrEqual(before_compaction);
     expect(compacted.at(-1)!.createdAt).toBeLessThanOrEqual(Date.now());
-    first.chat.log.begin_run("closing-round", "prompt");
+    first.chat.log.begin_run("closing-round", "prompt", null);
     await first.chat.close();
     expect(first.append).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -598,6 +598,7 @@ it("遗留工具任务只执行 SDK 取消收尾，恢复后保留公开工具�
         status: "running",
         endedAt: null,
         averageTokensPerSecond: null,
+        modelId: null,
       };
     },
   });

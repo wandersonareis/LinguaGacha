@@ -690,6 +690,7 @@ function user_entry(
     id,
     delivery: "round" as const,
     averageTokensPerSecond: null,
+    modelId: null,
     text,
     attachments: images.map((id) => uploaded_file(id)),
     status,

@@ -64,6 +64,7 @@ it("已提交历史按用户、助手、工具和后续回答投影，隐藏继�
     checkpoint: 0 as EntryId,
     endedAt: 10,
     averageTokensPerSecond: null,
+    modelId: "gpt-test",
   };
   const conversationId = 1 as ConversationId;
   const messages: Message[] = [
@@ -118,7 +119,14 @@ it("已提交历史按用户、助手、工具和后续回答投影，隐藏继�
   const view = new AgentChatView();
   view.reset(records, submissions, [], {}, state);
   expect(view.entries).toMatchObject([
-    { kind: "user_message", id: "round", text: "查询", status: "success", endedAt: 10 },
+    {
+      kind: "user_message",
+      id: "round",
+      text: "查询",
+      status: "success",
+      endedAt: 10,
+      modelId: "gpt-test",
+    },
     { kind: "assistant_message", parts: [{ kind: "text", text: "准备查询" }], status: "success" },
     {
       kind: "tool_call",
@@ -146,6 +154,7 @@ it("流式变化只返回当前条目，终帧与提交变化顺序不影响恢�
     checkpoint: 0 as EntryId,
     endedAt: null,
     averageTokensPerSecond: null,
+    modelId: null,
   };
   const view = new AgentChatView();
   view.conversations.set(conversationId, { id: conversationId });

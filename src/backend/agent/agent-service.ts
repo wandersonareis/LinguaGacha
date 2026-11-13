@@ -604,6 +604,8 @@ export class AgentService {
           previous.status = "running";
           previous.endedAt = null;
           previous.averageTokensPerSecond = null;
+          // 续跑可能换用当前选择的模型，轮次展示跟随最近一次实际运行。
+          previous.modelId = chat.model?.id ?? null;
         });
         const text = this.read_continue_text();
         const accepted = await chat.submit(
@@ -612,7 +614,7 @@ export class AgentService {
           execution,
           "hidden",
         );
-        chat.log.begin_run(round.id, "continue");
+        chat.log.begin_run(round.id, "continue", chat.model?.id ?? null);
         this.launch(chat, execution, () => this.drive(chat, execution, accepted));
       } else {
         const next = chat.queue.read_next();

@@ -1197,6 +1197,9 @@ function normalize_entry(value: unknown): AgentEntry[] {
     ) {
       return [];
     }
+    // 模型标识只用于展示，未知值降级为 null 而不是丢弃整条轮次。
+    const model_id =
+      typeof value["modelId"] === "string" && value["modelId"] !== "" ? value["modelId"] : null;
     return [
       {
         ...base,
@@ -1204,6 +1207,7 @@ function normalize_entry(value: unknown): AgentEntry[] {
         status,
         endedAt: ended_at,
         averageTokensPerSecond: average_speed,
+        modelId: model_id,
       },
     ];
   }

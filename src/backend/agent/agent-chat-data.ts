@@ -44,12 +44,13 @@ export type AgentInputRecord = {
   delivery: "round" | "steer" | "hidden";
   queuedId: string | null;
 };
-/** 一轮用户意图可跨多次 SDK 生成，统一保存终态与修订切点。 */
+/** 一轮用户意图可跨多次 SDK 生成，统一保存终态、修订切点与本轮模型。 */
 export type AgentRoundRecord = {
   status: AgentEntryStatus;
   checkpoint: EntryId;
   endedAt: number | null;
   averageTokensPerSecond: number | null;
+  modelId: string | null; // 本轮提交时固定的模型，旧记录没有该事实时为 null
 };
 
 /** 产品命令记录受理事实，SDK submission 持有执行终态。 */
@@ -76,7 +77,7 @@ export type AgentChatData = {
 /** 产品事实按 `chatId` 保存，SDK 历史分叉共享队列和命令受理记录。 */
 export const AgentChatDoc = defineDocFamily<AgentChatData, null>({
   kind: "linguagacha.chat",
-  version: 2,
+  version: 3,
   scope: "session",
   family: true,
   initial: () => ({
@@ -90,8 +91,24 @@ export const AgentChatDoc = defineDocFamily<AgentChatData, null>({
     compactionStartedAt: {},
   }),
   migrate: (value, fromVersion) => {
-    if (fromVersion !== 1) throw new AppError("file.invalid_structure");
-    // 旧任务没有起始时间事实，迁移只建立空索引。
-    return { ...value, compactionStartedAt: {} } as AgentChatData;
+    if (fromVersion !== 1 && fromVersion !== 2) throw new AppError("file.invalid_structure");
+    const rounds = value["rounds"];
+    // v1 没有压缩起点索引；v1/v2 的旧轮次没有模型事实，统一补 null。
+    const migrated = {
+      ...value,
+      compactionStartedAt: fromVersion === 1 ? {} : value["compactionStartedAt"],
+      rounds:
+        typeof rounds === "object" && rounds !== null && !Array.isArray(rounds)
+          ? Object.fromEntries(
+              Object.entries(rounds).map(([id, round]) => [
+                id,
+                typeof round === "object" && round !== null && !Array.isArray(round)
+                  ? { modelId: null, ...round }
+                  : round,
+              ]),
+            )
+          : rounds,
+    };
+    return migrated as unknown as AgentChatData;
   },
 });

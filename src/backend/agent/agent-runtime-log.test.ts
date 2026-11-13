@@ -37,7 +37,7 @@ describe("AgentRuntimeLog", () => {
   it("按最终等级选择控制台输出，正常停止静默且刷新不重复提交", () => {
     const append = vi.fn<(payload: LogAppendPayload) => void>();
     const log = new AgentRuntimeLog({ append }, "chat-test");
-    log.begin_run("round", "prompt");
+    log.begin_run("round", "prompt", null);
     for (const level of ["debug", "info", "warning", "error", "fatal"] as const) {
       log.handle_event({
         type: "tool_execution_start",
@@ -90,7 +90,7 @@ describe("AgentRuntimeLog", () => {
       const input = { query: "原始输入", items: Array.from({ length: 40 }, (_, index) => index) };
       const details = { text: '正文 "引号"\n'.repeat(2_000), items: input.items };
       const expected = structuredClone(details);
-      log.begin_run("round", "prompt");
+      log.begin_run("round", "prompt", null);
       log.handle_event({
         type: "tool_execution_start",
         toolCallId: "call",
@@ -153,7 +153,7 @@ describe("AgentRuntimeLog", () => {
 
   it("停止时保存后续流式正文，图片只记录类型", () => {
     const { log, records } = create_log();
-    log.begin_run("round", "prompt");
+    log.begin_run("round", "prompt", null);
     log.handle_event({
       type: "message_start",
       message: {
@@ -196,9 +196,9 @@ describe("AgentRuntimeLog", () => {
 
   it("继续执行分配新执行身份并保留轮次，压缩拥有独立起止记录", () => {
     const { log, records } = create_log();
-    log.begin_run("round", "prompt");
+    log.begin_run("round", "prompt", "gpt-test");
     log.finish_run("error");
-    log.begin_run("round", "continue");
+    log.begin_run("round", "continue", "gpt-next");
     log.handle_event({ type: "compaction_start", reason: "threshold", task_id: 1 });
     log.handle_event({
       type: "compaction_end",
@@ -214,6 +214,8 @@ describe("AgentRuntimeLog", () => {
     expect(starts[0]?.runtime_id).toBe(starts[1]?.runtime_id);
     expect(starts[0]?.round_id).toBe(starts[1]?.round_id);
     expect(starts[0]?.run_id).not.toBe(starts[1]?.run_id);
+    expect(starts[0]).toMatchObject({ model_id: "gpt-test" });
+    expect(starts[1]).toMatchObject({ model_id: "gpt-next" });
     expect(records().find((record) => record.event === "compaction_end")).toMatchObject({
       status: "error",
       task_id: 1,
@@ -224,7 +226,7 @@ describe("AgentRuntimeLog", () => {
 
   it("取消使用 SDK 诊断和原执行停止来源，不补造执行耗时", () => {
     const { log, records } = create_log();
-    log.begin_run("round", "prompt");
+    log.begin_run("round", "prompt", null);
     log.handle_event({
       type: "tool_execution_start",
       toolCallId: "call",
@@ -252,7 +254,7 @@ describe("AgentRuntimeLog", () => {
   it("未提交的工具异常在收尾时保留诊断，不生成工具完成事实", () => {
     const append = vi.fn<(payload: LogAppendPayload) => void>();
     const log = new AgentRuntimeLog({ append }, "chat-test");
-    log.begin_run("round", "prompt");
+    log.begin_run("round", "prompt", null);
     log.handle_event({
       type: "tool_execution_start",
       toolCallId: "call",

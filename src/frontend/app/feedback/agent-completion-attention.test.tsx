@@ -80,6 +80,7 @@ function round_entry(status: AgentEntry["status"]): AgentEntry {
     id: `round-${status}`,
     delivery: "round",
     averageTokensPerSecond: null,
+    modelId: null,
     text: "任务",
     attachments: [],
     status,

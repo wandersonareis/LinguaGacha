@@ -25,6 +25,7 @@ const running: RoundEntry = {
   createdAt: 0,
   endedAt: null,
   averageTokensPerSecond: null,
+  modelId: "gpt-test",
 };
 let root: Root;
 let container: HTMLDivElement;
@@ -74,6 +75,13 @@ it("仅当前回合订阅实时速度，历史均速不受断线或新回合速�
   state.transport = "ready";
   await render(history, running);
   expect(footers()[1]).toContain("42.25 T/S");
+});
+
+it("展示本回合模型标识，旧历史缺失模型时不渲染", async () => {
+  await render(running);
+  expect(container.querySelector(".agent-round-footer__model")?.textContent).toContain("gpt-test");
+  await render({ ...running, modelId: null });
+  expect(container.querySelector(".agent-round-footer__model")).toBeNull();
 });
 
 it("无数据和其他回合速度不显示分隔符，有效零值和失败结算正常展示", async () => {

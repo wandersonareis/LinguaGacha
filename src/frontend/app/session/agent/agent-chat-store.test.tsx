@@ -1445,6 +1445,7 @@ describe("AgentChatStore", () => {
         id: "user-new",
         delivery: "round",
         averageTokensPerSecond: null,
+        modelId: null,
         text: '@skill("glossary-audit") 审校',
         attachments: [
           ...image_attachments("webp-image"),
@@ -2102,6 +2103,7 @@ function user_entry(id: string, text: string, images: string[] = []) {
     id,
     delivery: "round" as const,
     averageTokensPerSecond: null,
+    modelId: null,
     text,
     attachments: image_attachments(...images),
     status: "success" as const,

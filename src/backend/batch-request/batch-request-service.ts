@@ -330,6 +330,7 @@ export class BatchRequestService {
                 content: build_batch_request_result_log({
                   run_id: handle.run_id,
                   request_id: entry.id,
+                  model_id: config.model_id,
                   started_at,
                   format: manifest.format,
                   payload,

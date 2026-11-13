@@ -209,6 +209,7 @@ export type AgentEntry = JsonRecord &
               status: AgentEntryStatus;
               endedAt: number | null;
               averageTokensPerSecond: number | null; // 终态生成均速，运行中或没有有效统计时为空。
+              modelId: string | null; // 本轮使用的模型标识，旧历史没有该事实时为 null。
             }
           | { delivery: "steer"; status: "success"; endedAt: number }
         ))

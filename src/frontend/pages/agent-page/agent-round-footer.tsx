@@ -30,6 +30,14 @@ export function AgentRoundFooter({ user }: { user: RoundEntry }): JSX.Element {
       <small className="agent-round-footer__label">
         {t(ROUND_LABEL_KEYS[user.status], { duration })}
       </small>
+      {user.modelId === null ? null : (
+        <small className="agent-round-footer__model">
+          <span className="agent-round-footer__separator" aria-hidden="true">
+            ·
+          </span>
+          {user.modelId}
+        </small>
+      )}
       {active ? (
         <AgentRoundLiveSpeed round_id={user.id} />
       ) : (
@@ -52,7 +60,7 @@ function AgentRoundSpeed({ speed }: { speed: number | null }): JSX.Element | nul
   if (speed === null) return null;
   return (
     <small className="agent-round-footer__speed">
-      <span className="agent-round-footer__speed-separator" aria-hidden="true">
+      <span className="agent-round-footer__separator" aria-hidden="true">
         ·
       </span>
       {`${speed.toFixed(2)} T/S`}

@@ -314,6 +314,7 @@ export class AgentChatView {
             status: round?.status ?? "running",
             endedAt: round?.endedAt ?? null,
             averageTokensPerSecond: round?.averageTokensPerSecond ?? null,
+            modelId: round?.modelId ?? null,
           },
       record.id,
     );

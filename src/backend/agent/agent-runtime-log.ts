@@ -79,7 +79,12 @@ type AgentLogEvent =
       tool_name: string;
       ended_at: string;
     }
-  | { event: "run_start"; mode: "prompt" | "queued" | "continue"; started_at: string }
+  | {
+      event: "run_start";
+      mode: "prompt" | "queued" | "continue";
+      model_id: string | null; // 本 run 使用的模型，运行前未解析时为 null
+      started_at: string;
+    }
   | ({
       event: "run_end";
       status: AgentLogStatus;
@@ -137,9 +142,13 @@ export class AgentRuntimeLog {
   ) {}
 
   /** continue 保留轮次身份，每次真正执行分配新的 run，耗时不包含失败后的用户等待。 */
-  public begin_run(round_id: string, mode: "prompt" | "queued" | "continue"): void {
+  public begin_run(
+    round_id: string,
+    mode: "prompt" | "queued" | "continue",
+    model_id: string | null,
+  ): void {
     this.run = { run_id: uuidv7(), round_id, started_at: new Date().toISOString() };
-    this.append({ event: "run_start", mode, started_at: this.run.started_at });
+    this.append({ event: "run_start", mode, model_id, started_at: this.run.started_at });
   }
 
   /** SDK Promise 结算后才记录真实结束，UI 提前停止不会改变此处的时钟。 */

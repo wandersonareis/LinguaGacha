@@ -763,15 +763,17 @@
   white-space: nowrap;
 }
 
+.agent-round-footer__model,
 .agent-round-footer__speed {
   flex: 0 0 auto;
 }
 
-.agent-round-footer__speed-separator {
+.agent-round-footer__separator {
   margin-inline: 4px;
 }
 
 @container agent-round-footer (max-width: 360px) {
+  .agent-round-footer__model,
   .agent-round-footer__speed {
     display: none;
   }
