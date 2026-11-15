@@ -751,6 +751,7 @@ describe("AgentChatStore", () => {
         mass_items: 0,
         same_dst: 0,
       },
+      preview: null,
     };
     desktop_api_mocks.api_get.mockResolvedValue(agent_snapshot({ pendingDecision: waiting }));
     desktop_api_mocks.api_fetch.mockImplementationOnce(async () => {
@@ -834,6 +835,7 @@ describe("AgentChatStore", () => {
           mass_items: 0,
           same_dst: 0,
         },
+        preview: null,
       } satisfies AgentPendingDecision,
       path: "/api/agent/write-approval/resolve",
       body: { id: "countdown-write", decision: "allow_once" },
@@ -959,6 +961,7 @@ describe("AgentChatStore", () => {
         mass_items: 1,
         same_dst: 1,
       },
+      preview: null,
     };
 
     await act(async () => {

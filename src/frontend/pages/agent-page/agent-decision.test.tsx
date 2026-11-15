@@ -186,6 +186,7 @@ describe("AgentDecision", () => {
           mass_items: 0,
           same_dst: 0,
         },
+        preview: null,
       },
       vi.fn(),
       on_resolve_write_approval,
@@ -203,6 +204,67 @@ describe("AgentDecision", () => {
     ).toEqual(["1", "12", "2", "3", "6"]);
     await act(async () => actions[1]?.click());
     expect(on_resolve_write_approval).toHaveBeenCalledWith("allow_once");
+  });
+
+  it("写入授权展示重复译文、累计风险和旧值/新值样本", async () => {
+    await render_decision(root, {
+      kind: "write_approval",
+      id: "apply-preview",
+      summary: {
+        pages: 0,
+        items: 80,
+        glossary: 0,
+        textPreserve: 0,
+        preReplacement: 0,
+        postReplacement: 0,
+        files: 0,
+        knowledge: 0,
+        prompts: 0,
+        mass_change: 0,
+        mass_items: 80,
+        same_dst: 80,
+      },
+      preview: {
+        total: 80,
+        file_total: 1,
+        files: [{ path: "items.po", count: 80 }],
+        distinct_dst: 1,
+        top_dst: { text: "Same text", count: 80 },
+        sample: [
+          {
+            item_id: 1,
+            file_path: "items.po",
+            src: "Source",
+            before: "Old",
+            after: "Same text",
+          },
+        ],
+        noop: 0,
+        empty: 0,
+        truncated: true,
+        cumulative: {
+          total: 120,
+          same_dst: 120,
+          top_dst: { text: "Same text", count: 120 },
+          risky: true,
+        },
+      },
+    });
+
+    expect(container.querySelector(".agent-write-preview__cumulative")?.textContent).toContain(
+      "agent_page.approval.preview.cumulative",
+    );
+    expect(container.querySelector(".agent-write-preview__top")?.textContent).toContain(
+      "Same text",
+    );
+    expect(
+      [...container.querySelectorAll(".agent-write-preview__table tbody tr")],
+    ).toHaveLength(1);
+    expect(
+      [...container.querySelectorAll(".agent-write-preview__table tbody td")].map(
+        (cell) => cell.textContent,
+      ),
+    ).toEqual(["1", "items.po", "Old", "Same text"]);
   });
 
   it.each(["question", "write_approval"] as const)(
@@ -229,6 +291,7 @@ describe("AgentDecision", () => {
                 mass_items: 0,
                 same_dst: 0,
               },
+              preview: null,
             };
       await render_decision(root, decision);
       const button = action(

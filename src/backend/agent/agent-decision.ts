@@ -1,6 +1,7 @@
 import type { JsonRecord } from "../../domain/json";
 import type {
   AgentPendingDecision,
+  AgentPendingWritePreview,
   AgentPendingWriteSummary,
   AgentQuestion,
   AgentQuestionResponse,
@@ -81,6 +82,7 @@ export class AgentDecisionCoordinator {
   public wait_for_write_approval(
     tool_call_id: string,
     summary: AgentPendingWriteSummary,
+    preview: AgentPendingWritePreview | null,
     signal: AbortSignal | undefined,
   ): Promise<AgentWriteApprovalDecision> {
     this.assert_available(signal);
@@ -88,6 +90,7 @@ export class AgentDecisionCoordinator {
       kind: "write_approval",
       id: tool_call_id,
       summary: structuredClone(summary),
+      preview: preview === null ? null : structuredClone(preview),
     };
     return new Promise<AgentWriteApprovalDecision>((resolve, reject) => {
       let pending!: PendingWriteApproval;

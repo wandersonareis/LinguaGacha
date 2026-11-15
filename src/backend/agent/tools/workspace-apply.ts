@@ -1,20 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 
-import type { AgentApprovalMode } from "../../../domain/setting";
-import type { AgentPendingWriteSummary } from "../../../shared/agent";
 import { define_agent_tool, agent_tool_result } from "../tool-definition";
 import type { AgentWorkspacePort } from "../workspace/service";
-
-/** `AgentService` 通过审批端口提供当前模式和用户决定。 */
-export type AgentWorkspaceApprovalPort = {
-  read_mode: () => AgentApprovalMode;
-  wait_for_decision: (
-    tool_call_id: string,
-    summary: AgentPendingWriteSummary,
-    signal: AbortSignal | undefined,
-  ) => Promise<void>;
-};
+import type { AgentWorkspaceApprovalPort } from "../workspace/approval";
 
 /** 按本批审批模式提交准备好的变更，等待审批和服务回执。 */
 export function create_agent_workspace_apply_tool(options: {
@@ -72,11 +61,9 @@ export function create_agent_workspace_apply_tool(options: {
       const tool_call_id = api.callId;
       const signal = context.abortSignal;
       signal?.throwIfAborted();
-      // 每批开始时确定审批方式，期间修改偏好只影响后续批次。
-      // mass_change 即使 auto 也必须让用户确认；普通批次沿用原审批模式。
-      const result = await options.workspace.apply_workspace(async (summary) => {
-        if (options.approval.read_mode() === "auto" && summary.mass_change !== 1) return;
-        await options.approval.wait_for_decision(tool_call_id, summary, signal);
+      // 风险判断和是否等待用户都由 AgentService 的审批端口统一决定。
+      const result = await options.workspace.apply_workspace(async (request) => {
+        return await options.approval.before_write(tool_call_id, request, signal);
       }, options.task_token());
       return agent_tool_result(result);
     },

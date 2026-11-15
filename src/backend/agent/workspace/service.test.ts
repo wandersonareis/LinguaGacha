@@ -167,7 +167,10 @@ describe("AgentWorkspaceService", () => {
       rejected: [],
     });
     expect(approve).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ knowledge: 1, items: 1 }),
+      expect.objectContaining({
+        summary: expect.objectContaining({ knowledge: 1, items: 1 }),
+        preview: expect.objectContaining({ total: 1 }),
+      }),
     );
     expect(fixture.write_store).toHaveBeenCalledOnce();
   });
@@ -230,7 +233,9 @@ describe("AgentWorkspaceService", () => {
       });
       const result = await fixture.service.apply_workspace(approve);
       expect(approve).toHaveBeenCalledWith(
-        expect.objectContaining({ files: operation === "none" ? 3 : 4 }),
+        expect.objectContaining({
+          summary: expect.objectContaining({ files: operation === "none" ? 3 : 4 }),
+        }),
       );
       expect(fixture.apply_file_changes).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1293,18 +1298,22 @@ describe("AgentWorkspaceService", () => {
       revisions: { items: 2, proofreading: 2, quality: 2, knowledge: 0, prompts: 2, pdf: 0 },
     });
     expect(request_approval).toHaveBeenCalledWith({
-      pages: 0,
-      items: 1,
-      glossary: 1,
-      textPreserve: 0,
-      preReplacement: 0,
-      postReplacement: 0,
-      files: 0,
-      knowledge: 0,
-      prompts: 1,
-      mass_change: 0,
-      mass_items: 1,
-      same_dst: 1,
+      summary: {
+        pages: 0,
+        items: 1,
+        glossary: 1,
+        textPreserve: 0,
+        preReplacement: 0,
+        postReplacement: 0,
+        files: 0,
+        knowledge: 0,
+        prompts: 1,
+        mass_change: 0,
+        mass_items: 1,
+        same_dst: 1,
+      },
+      preview: expect.objectContaining({ total: 1 }),
+      risk: expect.objectContaining({ total: 1 }),
     });
     expect(fixture.write_store).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2026,18 +2035,22 @@ it("PDF 零条目工程按页保存、隔离旧指纹，语言变化后重建工
     const before = services.state.cache.snapshot();
     expect((await save(original_fp, draft))["status"]).toBe("applied");
     expect(request_approval).toHaveBeenCalledExactlyOnceWith({
-      pages: 1,
-      items: 0,
-      glossary: 0,
-      textPreserve: 0,
-      preReplacement: 0,
-      postReplacement: 0,
-      files: 0,
-      knowledge: 0,
-      prompts: 0,
-      mass_change: 0,
-      mass_items: 0,
-      same_dst: 0,
+      summary: {
+        pages: 1,
+        items: 0,
+        glossary: 0,
+        textPreserve: 0,
+        preReplacement: 0,
+        postReplacement: 0,
+        files: 0,
+        knowledge: 0,
+        prompts: 0,
+        mass_change: 0,
+        mass_items: 0,
+        same_dst: 0,
+      },
+      preview: null,
+      risk: expect.objectContaining({ total: 0 }),
     });
     expect((await services.project.summary.read())["snapshot"]).toMatchObject({
       entries: [

@@ -128,7 +128,7 @@ export function AgentComposerModelControls(props: {
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="agent-composer__model-trigger"
+                className="agent-composer__model-trigger agent-composer__function-trigger"
                 disabled={model_controls_disabled}
                 onClick={() => set_functions_open(true)}
               >

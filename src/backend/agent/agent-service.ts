@@ -7,10 +7,13 @@ import { AgentCompactionError } from "./agent-compaction";
 import { randomUUID } from "node:crypto";
 import type { ProjectDatabase } from "../database/database-operations";
 import type { AgentChatStorage } from "../database/agent-chat-storage";
+import { create_agent_workspace_apply_tool } from "./tools/workspace-apply";
+import type { AgentWorkspaceApprovalPort } from "./workspace/approval";
 import {
-  create_agent_workspace_apply_tool,
-  type AgentWorkspaceApprovalPort,
-} from "./tools/workspace-apply";
+  acknowledge_agent_write_risk,
+  accumulate_agent_write_risk,
+  type AgentWriteRiskState,
+} from "./write-risk";
 import type { AgentFile, AgentDocument } from "../../shared/agent-workspace-file";
 import { normalize_agent_approval_mode } from "../../domain/setting";
 import type { AgentSkillsService } from "./agent-skills-service";
@@ -175,6 +178,7 @@ export class AgentService {
   private chat: AgentChat | null = null;
   private model_config: Model | null = null; // 当前主模型配置供批量翻译跟随解析
   private execution: AgentExecution | null = null; // 唯一活动执行，旧会话收尾依原执行身份释放租约
+  private write_risk: AgentWriteRiskState | null = null; // 同一轮内的累计写入风险，换轮后自然丢弃
   private readonly input_commands = new Map<
     string,
     { kind: AgentInputCommandKind; request: JsonRecord; work: Promise<AgentInputCommandAck> }
@@ -1335,6 +1339,7 @@ export class AgentService {
   private release(execution: AgentExecution): void {
     if (this.execution === execution) {
       this.execution = null;
+      this.write_risk = null;
       if (this.chat?.execution === execution) this.chat.execution = null;
     }
     this.runtime_gate.finish_runtime(execution.lease);
@@ -1530,14 +1535,46 @@ export class AgentService {
       "agent_runtime.message.continue",
     );
   }
-  /** 每批读取审批偏好，拒绝决定作为安全工具错误交回模型。 */
+  /** 每批读取审批偏好，累计本轮写入风险，拒绝决定作为安全工具错误交回模型。 */
   private workspace_approval_port(): AgentWorkspaceApprovalPort {
     return {
-      read_mode: () =>
-        normalize_agent_approval_mode(this.settings.read_setting()["agent_approval_mode"]),
-      wait_for_decision: async (id, summary, signal) => {
-        if ((await this.decisions.wait_for_write_approval(id, summary, signal)) === "reject")
+      before_write: async (id, request, signal) => {
+        const mode = normalize_agent_approval_mode(
+          this.settings.read_setting()["agent_approval_mode"],
+        );
+        const batch_risk = request.summary.mass_change === 1;
+        // 文件批次不参与条目累计；自动模式下仍按原有权限偏好直接写入。
+        if (request.risk === null) {
+          if (mode === "auto" && !batch_risk) return () => undefined;
+          const decision = await this.decisions.wait_for_write_approval(
+            id,
+            request.summary,
+            null,
+            signal,
+          );
+          if (decision === "reject")
+            throw new AgentToolError({ code: "approval_denied", action: "await_user" });
+          return () => undefined;
+        }
+        const round_id = this.execution?.roundId ?? "agent";
+        const risk = accumulate_agent_write_risk(this.write_risk, round_id, request.risk);
+        const commit = (): void => {
+          this.write_risk = acknowledge_agent_write_risk(risk);
+        };
+        if (mode === "auto" && !batch_risk && !risk.requires_approval) return commit;
+        const preview =
+          request.preview === null
+            ? null
+            : { ...request.preview, cumulative: risk.cumulative };
+        const decision = await this.decisions.wait_for_write_approval(
+          id,
+          request.summary,
+          preview,
+          signal,
+        );
+        if (decision === "reject")
           throw new AgentToolError({ code: "approval_denied", action: "await_user" });
+        return commit;
       },
     };
   }

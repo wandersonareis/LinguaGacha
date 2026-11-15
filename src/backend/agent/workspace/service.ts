@@ -48,7 +48,11 @@ import {
 } from "../../../domain/quality";
 import { read_project_prefilter_settings } from "../../../domain/project-settings";
 import * as AppErrors from "../../../shared/error";
-import type { AgentPendingWriteSummary, AgentWorkspaceLinkResult } from "../../../shared/agent";
+import type {
+  AgentPendingWritePreview,
+  AgentPendingWriteSummary,
+  AgentWorkspaceLinkResult,
+} from "../../../shared/agent";
 import {
   PROJECT_DATA_SECTIONS,
   type ProjectDataSectionRevisions,
@@ -76,6 +80,17 @@ import {
   type AgentWorkspaceIntentBatch,
 } from "../../project/agent-workspace-write";
 import type { AgentWorkspaceRejectedChange } from "../../project/agent-workspace-write";
+import type {
+  AgentWorkspaceApprovalRequest,
+  AgentWorkspaceWriteCommit,
+  AgentWorkspaceWriteRisk,
+} from "./approval";
+import { build_agent_write_preview } from "./write-preview";
+import {
+  AGENT_MASS_CHANGE_MIN_ITEMS,
+  AGENT_MASS_CHANGE_PROJECT_RATIO,
+  AGENT_MASS_CHANGE_SAME_DST_RATIO,
+} from "../write-risk";
 import {
   AGENT_WORKSPACE_CHANGE_PATHS,
   AGENT_WORKSPACE_PATHS,
@@ -829,7 +844,9 @@ export class AgentWorkspaceService {
 
   /** 一次准备真实差异，按需等待审批，再把同一份差异交给跨 section 事务。 */
   public async apply_workspace(
-    request_approval?: (summary: AgentPendingWriteSummary) => Promise<void>,
+    request_approval?: (
+      request: AgentWorkspaceApprovalRequest,
+    ) => Promise<AgentWorkspaceWriteCommit | void>,
     task_token = "agent",
   ): Promise<JsonRecord> {
     return await this.exclusive(async () => {
@@ -863,6 +880,9 @@ export class AgentWorkspaceService {
       let preview: ReturnType<typeof resolve_agent_workspace_writes>;
       let all_rejected: AgentWorkspaceRejectedChange[];
       let project_item_count = 0;
+      let approval_preview: AgentPendingWritePreview | null = null;
+      let approval_risk: AgentWorkspaceWriteRisk | null = null;
+      let approval_commit: AgentWorkspaceWriteCommit | undefined;
       try {
         const quality = this.options.cache.quality.readBlock(); // 读取边界已校验规则，预演只借用当前事实。
         const current: AgentWorkspaceCurrentFacts = {
@@ -891,6 +911,13 @@ export class AgentWorkspaceService {
         };
         project_item_count = current.items.length;
         preview = resolve_agent_workspace_writes({ batch: parsed.batch, current });
+        const write_preview = build_agent_write_preview({
+          changes: preview.itemChanges,
+          current_items: current.items,
+          project_item_count,
+        });
+        approval_preview = write_preview.preview;
+        approval_risk = write_preview.risk;
         all_rejected = normalize_workspace_rejections(
           [...parsed.rejected, ...preview.rejected],
           parsed.batch,
@@ -921,14 +948,20 @@ export class AgentWorkspaceService {
         };
       }
       // 只按预演后的实际变化决定审批，拒绝或未变化的内容不参与判断。
-      if (Object.keys(preview.applied).some((scope) => scope !== "knowledge"))
-        await request_approval?.({
-          ...summarize_applied_changes(preview.applied),
-          ...summarize_mass_change(
-            parsed.batch.items.map((item) => ({ dst: item.update.dst ?? "" })),
-            project_item_count,
-          ),
+      if (Object.keys(preview.applied).some((scope) => scope !== "knowledge")) {
+        const commit = await request_approval?.({
+          summary: {
+            ...summarize_applied_changes(preview.applied),
+            ...summarize_mass_change(
+              preview.itemChanges.map((change) => ({ dst: change.next.dst ?? "" })),
+              project_item_count,
+            ),
+          },
+          preview: approval_preview !== null && approval_preview.total > 0 ? approval_preview : null,
+          risk: approval_risk,
         });
+        if (typeof commit === "function") approval_commit = commit;
+      }
 
       let write_ack: AgentWorkspaceStoreResult;
       try {
@@ -951,6 +984,7 @@ export class AgentWorkspaceService {
         }
         throw workspace_error_with_action(error, "workspace_apply");
       }
+      approval_commit?.();
       // Store 只接收已匹配活动基线的 preview candidates，事务新增 mismatch 必然来自外部漂移。
       const rejected = [...all_rejected, ...write_ack.rejected];
       const result = {
@@ -979,7 +1013,9 @@ export class AgentWorkspaceService {
   private async apply_files(
     active: ActiveAgentWorkspace,
     parsed: ParsedAgentWorkspaceChanges,
-    approve?: (summary: AgentPendingWriteSummary) => Promise<void>,
+    approve?: (
+      request: AgentWorkspaceApprovalRequest,
+    ) => Promise<AgentWorkspaceWriteCommit | void>,
     task_token = "agent",
   ): Promise<JsonRecord> {
     const preview = await preview_file_changes({
@@ -1012,9 +1048,13 @@ export class AgentWorkspaceService {
       };
     };
     if (preview.rejected.length) return reject(preview.rejected);
-    await approve?.({
-      ...summarize_applied_changes({}),
-      files: preview.created + preview.files.updates.length + preview.files.deletes.length,
+    const commit = await approve?.({
+      summary: {
+        ...summarize_applied_changes({}),
+        files: preview.created + preview.files.updates.length + preview.files.deletes.length,
+      },
+      preview: null,
+      risk: null,
     });
     try {
       const result = await this.options.runtimeGate.run_agent_project_write(async (signal) => {
@@ -1048,6 +1088,7 @@ export class AgentWorkspaceService {
           })),
           result.directory_changes,
         );
+      if (typeof commit === "function") commit();
       // 对外回执保留调用方的路径表示，实际读取使用解析后的本机路径。
       const files = {
         ...result.files,
@@ -1243,10 +1284,6 @@ function is_inside_path(root: string, target: string): boolean {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-const MASS_CHANGE_MIN_ITEMS = 100;
-const MASS_CHANGE_SAME_DST_RATIO = 0.9;
-const MASS_CHANGE_PROJECT_RATIO = 0.1;
-
 /** 审批前识别可能覆盖全项目的重复译文；命中后即使 auto 也必须询问用户。 */
 export function summarize_mass_change(
   items: readonly { dst?: string }[],
@@ -1262,9 +1299,9 @@ export function summarize_mass_change(
   const same_dst = Math.max(...counts.values());
   const project_ratio = total / Math.max(project_item_count, 1);
   const suspicious =
-    total >= MASS_CHANGE_MIN_ITEMS &&
-    (same_dst / total >= MASS_CHANGE_SAME_DST_RATIO ||
-      project_ratio >= MASS_CHANGE_PROJECT_RATIO);
+    total >= AGENT_MASS_CHANGE_MIN_ITEMS &&
+    (same_dst / total >= AGENT_MASS_CHANGE_SAME_DST_RATIO ||
+      project_ratio >= AGENT_MASS_CHANGE_PROJECT_RATIO);
   return { mass_change: suspicious ? 1 : 0, same_dst, mass_items: total };
 }
 

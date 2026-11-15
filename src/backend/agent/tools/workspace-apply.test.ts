@@ -10,7 +10,7 @@ describe("workspace_apply", () => {
     const apply_workspace = vi.fn<AgentWorkspacePort["apply_workspace"]>(async () => result);
     const tool = create_agent_workspace_apply_tool({
       workspace: { apply_workspace },
-      approval: { read_mode: () => "auto", wait_for_decision: vi.fn() },
+      approval: { before_write: vi.fn() },
       task_token: () => "task",
     });
     expect(() =>

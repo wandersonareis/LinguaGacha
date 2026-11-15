@@ -25,6 +25,8 @@ import type {
   AgentInputQueueSnapshot,
   AgentMessageInput,
   AgentPendingDecision,
+  AgentPendingWritePreview,
+  AgentPendingWriteSample,
   AgentQuestion,
   AgentQuestionResponse,
   AgentQueuedInput,
@@ -1290,7 +1292,112 @@ function normalize_pending_decision(value: unknown): AgentPendingDecision | null
     summary[field] = count;
   }
   if (Object.values(summary).every((count) => count === 0)) return undefined;
-  return { kind: "write_approval", id, summary };
+  return {
+    kind: "write_approval",
+    id,
+    summary,
+    preview: normalize_write_preview(value["preview"]),
+  };
+}
+
+/** 预览是可选展示，字段损坏时退回仅摘要，不阻断当前决定。 */
+function normalize_write_preview(value: unknown): AgentPendingWritePreview | null {
+  if (!is_json_record(value)) return null;
+  const total = read_nonnegative_integer(value["total"]);
+  const file_total = read_nonnegative_integer(value["file_total"]);
+  const distinct_dst = read_nonnegative_integer(value["distinct_dst"]);
+  const noop = read_nonnegative_integer(value["noop"]);
+  const empty = read_nonnegative_integer(value["empty"]);
+  if (
+    total === null ||
+    file_total === null ||
+    distinct_dst === null ||
+    noop === null ||
+    empty === null ||
+    typeof value["truncated"] !== "boolean"
+  )
+    return null;
+  const files = read_write_preview_files(value["files"]);
+  const sample = read_write_preview_sample(value["sample"]);
+  const top_dst = read_write_preview_top(value["top_dst"]);
+  const cumulative = read_write_preview_cumulative(value["cumulative"]);
+  if (files === null || sample === null || top_dst === undefined || cumulative === undefined)
+    return null;
+  return {
+    total,
+    file_total,
+    files,
+    distinct_dst,
+    top_dst,
+    sample,
+    noop,
+    empty,
+    truncated: value["truncated"],
+    cumulative,
+  };
+}
+
+/** 文件计数只展示有界列表；单项损坏时整段预览退回摘要。 */
+function read_write_preview_files(value: unknown): { path: string; count: number }[] | null {
+  if (!Array.isArray(value)) return null;
+  const files: { path: string; count: number }[] = [];
+  for (const row of value) {
+    if (!is_json_record(row) || typeof row["path"] !== "string") return null;
+    const count = read_nonnegative_integer(row["count"]);
+    if (count === null) return null;
+    files.push({ path: row["path"], count });
+  }
+  return files;
+}
+
+function read_write_preview_top(
+  value: unknown,
+): { text: string; count: number } | null | undefined {
+  if (value === null) return null;
+  if (!is_json_record(value) || typeof value["text"] !== "string") return undefined;
+  const count = read_nonnegative_integer(value["count"]);
+  return count === null ? undefined : { text: value["text"], count };
+}
+
+function read_write_preview_sample(value: unknown): AgentPendingWriteSample[] | null {
+  if (!Array.isArray(value)) return null;
+  const sample: AgentPendingWriteSample[] = [];
+  for (const row of value) {
+    if (!is_json_record(row)) return null;
+    const item_id = read_nonnegative_integer(row["item_id"]);
+    if (
+      item_id === null ||
+      typeof row["file_path"] !== "string" ||
+      typeof row["src"] !== "string" ||
+      typeof row["before"] !== "string" ||
+      typeof row["after"] !== "string"
+    )
+      return null;
+    sample.push({
+      item_id,
+      file_path: row["file_path"],
+      src: row["src"],
+      before: row["before"],
+      after: row["after"],
+    });
+  }
+  return sample;
+}
+
+function read_write_preview_cumulative(
+  value: unknown,
+): AgentPendingWritePreview["cumulative"] | undefined {
+  if (value === undefined || value === null) return null;
+  if (!is_json_record(value) || typeof value["risky"] !== "boolean") return undefined;
+  const total = read_nonnegative_integer(value["total"]);
+  const same_dst = read_nonnegative_integer(value["same_dst"]);
+  const top_dst = read_write_preview_top(value["top_dst"]);
+  if (total === null || same_dst === null || top_dst === undefined) return undefined;
+  return { total, same_dst, top_dst, risky: value["risky"] };
+}
+
+function read_nonnegative_integer(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 /** 问题投影复核选项数量、文本与身份唯一性。 */

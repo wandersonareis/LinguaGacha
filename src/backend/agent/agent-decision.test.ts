@@ -94,6 +94,7 @@ describe("AgentDecisionCoordinator", () => {
         mass_items: 0,
         same_dst: 0,
       },
+      null,
       undefined,
     );
     expect(() =>

@@ -3,6 +3,7 @@ import { type JSX, useEffect, useId, useState, type ReactNode, type RefObject } 
 import { ArrowRight, CircleQuestionMark, X } from "lucide-react";
 import type {
   AgentPendingDecision,
+  AgentPendingWritePreview,
   AgentPendingWriteSummary,
   AgentQuestionResponse,
   AgentWriteApprovalDecision,
@@ -201,6 +202,9 @@ function AgentWriteDecision(props: {
       title_ref={props.title_ref}
       description={<AgentWriteSummary summary={props.decision.summary} />}
     >
+      {props.decision.preview === null ? null : (
+        <AgentWritePreview preview={props.decision.preview} />
+      )}
       <div className="agent-decision__options">
         {WRITE_DECISIONS.map(([value, key], index) => (
           <AgentDecisionAction
@@ -381,6 +385,103 @@ function AgentWriteSummary(props: { summary: AgentPendingWriteSummary }): JSX.El
         );
       })}
     </ul>
+  );
+}
+
+/** 有界预览：先给出重复译文与累计风险，再按需展开旧值/新值样本。 */
+function AgentWritePreview(props: { preview: AgentPendingWritePreview }): JSX.Element {
+  const { locale, t } = useI18n();
+  const preview = props.preview;
+  const [expanded, set_expanded] = useState(preview.cumulative?.risky === true);
+  const format = (value: number): string => value.toLocaleString(locale);
+  const top = preview.top_dst;
+  const cumulative = preview.cumulative;
+  const show_cumulative = cumulative !== null && cumulative.total > preview.total;
+  const empty_value = t("agent_page.approval.preview.empty_value");
+  const file_list = preview.files.map((file) => file.path).join(", ");
+
+  return (
+    <div className="agent-write-preview">
+      {show_cumulative && cumulative !== null ? (
+        <p
+          className={
+            cumulative.risky
+              ? "agent-write-preview__cumulative agent-write-preview__cumulative--risk"
+              : "agent-write-preview__cumulative"
+          }
+        >
+          {t("agent_page.approval.preview.cumulative", {
+            count: format(cumulative.total),
+            same: format(cumulative.same_dst),
+          })}
+        </p>
+      ) : null}
+      {top !== null && top.count > 1 ? (
+        <p className="agent-write-preview__top">
+          {t("agent_page.approval.preview.top_dst", {
+            count: format(top.count),
+            text: top.text === "" ? empty_value : top.text,
+          })}
+        </p>
+      ) : null}
+      <p className="agent-write-preview__stats">
+        {t("agent_page.approval.preview.stats", {
+          total: format(preview.total),
+          distinct: format(preview.distinct_dst),
+          files: format(preview.file_total),
+        })}
+        {preview.noop > 0
+          ? ` · ${t("agent_page.approval.preview.noop", { count: format(preview.noop) })}`
+          : ""}
+        {preview.empty > 0
+          ? ` · ${t("agent_page.approval.preview.empty", { count: format(preview.empty) })}`
+          : ""}
+      </p>
+      {file_list === "" ? null : (
+        <p className="agent-write-preview__files">
+          {t("agent_page.approval.preview.file_list", { files: file_list })}
+        </p>
+      )}
+      <AppButton
+        type="button"
+        size="xs"
+        variant="ghost"
+        className="agent-write-preview__toggle"
+        aria-expanded={expanded}
+        onClick={() => set_expanded(!expanded)}
+      >
+        {expanded
+          ? t("agent_page.approval.preview.hide_sample")
+          : t("agent_page.approval.preview.show_sample", {
+              shown: format(preview.sample.length),
+              total: format(preview.total),
+            })}
+      </AppButton>
+      {expanded ? (
+        <div className="agent-write-preview__table-wrap">
+          <table className="agent-write-preview__table">
+            <thead>
+              <tr>
+                <th>{t("agent_page.approval.preview.sample_id")}</th>
+                <th>{t("agent_page.approval.preview.sample_file")}</th>
+                <th>{t("agent_page.approval.preview.sample_before")}</th>
+                <th>{t("agent_page.approval.preview.sample_after")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.sample.map((row) => (
+                <tr key={row.item_id}>
+                  <td>{row.item_id}</td>
+                  <td title={row.file_path}>{row.file_path || empty_value}</td>
+                  <td title={row.before}>{row.before || empty_value}</td>
+                  <td title={row.after}>{row.after || empty_value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

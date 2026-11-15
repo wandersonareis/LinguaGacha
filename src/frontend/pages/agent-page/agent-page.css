@@ -1021,6 +1021,11 @@
   gap: 4px;
 }
 
+/* 内联编辑只有一个附件入口，保持贴左，不随主输入区右对齐。 */
+.agent-composer--inline .agent-composer__footer-actions {
+  justify-content: flex-start;
+}
+
 .agent-composer--inline .agent-composer__inline-submit {
   min-width: 0;
 }
@@ -1223,9 +1228,18 @@
 }
 
 .agent-composer__footer-actions {
-  flex-wrap: wrap;
+  /* 空间不足时由模型按钮收缩截断，避免末项被换到第二行。 */
+  flex-wrap: nowrap;
   flex: 1 1 auto;
+  justify-content: flex-end; /* 剩余空间留在行首，按钮组贴近提交按钮。 */
   gap: 2px;
+}
+
+/* 极窄宽度容纳不下工具栏时恢复换行，避免把模型名称压到不可读。 */
+@container (max-width: 880px) {
+  .agent-composer__footer-actions {
+    flex-wrap: wrap;
+  }
 }
 
 .agent-composer__footer-end {
@@ -1308,6 +1322,91 @@
   color: var(--primary);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.agent-write-preview {
+  display: grid;
+  max-height: 240px;
+  gap: 5px;
+  margin-top: 2px;
+  padding-top: 8px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: var(--ui-font-size-12);
+  line-height: 1.45;
+}
+
+.agent-write-preview__cumulative,
+.agent-write-preview__top,
+.agent-write-preview__stats,
+.agent-write-preview__files {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-write-preview__cumulative--risk,
+.agent-write-preview__top {
+  color: var(--foreground);
+}
+
+.agent-write-preview__top {
+  font-weight: 500;
+}
+
+.agent-write-preview__files {
+  color: var(--muted-foreground);
+  font-size: var(--ui-font-size-11);
+}
+
+.agent-write-preview__toggle {
+  width: max-content;
+  height: auto;
+  min-height: 24px;
+  justify-self: start;
+  padding: 0;
+  color: var(--primary);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-write-preview__table-wrap {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius-button);
+  background: var(--background);
+}
+
+.agent-write-preview__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-font-size-11);
+  table-layout: fixed;
+}
+
+.agent-write-preview__table th,
+.agent-write-preview__table td {
+  max-width: 220px;
+  padding: 4px 6px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.agent-write-preview__table th {
+  position: sticky;
+  top: 0;
+  background: var(--muted);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.agent-write-preview__table tr:last-child td {
+  border-bottom: 0;
 }
 
 .agent-decision__prompt:focus {
@@ -1522,6 +1621,11 @@
   max-width: min(100%, 280px);
   min-width: 0;
   flex: 0 1 auto;
+}
+
+/* 只有主模型按钮随宽度收缩截断，进入子模型菜单的按钮保持完整内容宽度。 */
+.agent-composer__function-trigger {
+  flex: 0 0 auto;
 }
 
 .agent-composer__model-name {

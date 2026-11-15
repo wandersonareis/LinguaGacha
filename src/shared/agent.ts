@@ -63,6 +63,41 @@ export type AgentPendingWriteSummary = Readonly<
   Record<(typeof AGENT_PENDING_WRITE_SUMMARY_FIELDS)[number], number>
 >;
 
+/** 审批展示的样本上限；完整变更清单留在工作区，不进入事件载荷。 */
+export const AGENT_PENDING_WRITE_SAMPLE_LIMIT = 10;
+/** 单条预览文本上限，避免把 11k 行的整段译文复制进审批事件。 */
+export const AGENT_PENDING_WRITE_TEXT_LIMIT = 240;
+/** 预览中列出的受影响文件上限。 */
+export const AGENT_PENDING_WRITE_FILE_LIMIT = 8;
+
+/** 一条实际写入的条目样本，供用户在授权前核对旧值与新值。 */
+export type AgentPendingWriteSample = Readonly<{
+  item_id: number;
+  file_path: string;
+  src: string;
+  before: string;
+  after: string;
+}>;
+
+/** 写入授权前的有界预览；完整批次仍由工作区事务提交。 */
+export type AgentPendingWritePreview = Readonly<{
+  total: number;
+  file_total: number;
+  files: { path: string; count: number }[];
+  distinct_dst: number;
+  top_dst: Readonly<{ text: string; count: number }> | null;
+  sample: AgentPendingWriteSample[];
+  noop: number;
+  empty: number;
+  truncated: boolean;
+  cumulative: Readonly<{
+    total: number;
+    same_dst: number;
+    top_dst: Readonly<{ text: string; count: number }> | null;
+    risky: boolean;
+  }> | null;
+}>;
+
 /** 工程快照恢复范围；translations 保留规则/知识/资产/聊天，file 替换整个 .lg。 */
 export type AgentRestoreScope = "translations" | "project" | "file";
 
@@ -106,6 +141,7 @@ export type AgentPendingDecision = JsonRecord &
         kind: "write_approval";
         id: string;
         summary: AgentPendingWriteSummary;
+        preview: AgentPendingWritePreview | null;
       }
   );
 

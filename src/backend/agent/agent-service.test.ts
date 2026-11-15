@@ -41,6 +41,7 @@ import type { MutableModels } from "@earendil-works/pi-ai/models";
 import type { AppLanguage } from "../../domain/app-language";
 import type { JsonRecord } from "../../domain/json";
 import type { AgentChatChange, AgentChatEvent } from "../../shared/agent";
+import type { AgentWorkspaceApprovalRequest } from "./workspace/approval";
 import * as workspace_tools from "./tools/workspace-run";
 import { ProjectSessionState } from "../project/project-session-state";
 import { RuntimeOperationGate } from "../runtime-operation-gate";
@@ -164,6 +165,7 @@ const fake_agent_state = vi.hoisted(() => ({
   release_pending: null as (() => void) | null,
   hold_idle: false,
   hold_tool_execution: false,
+  write_batches: [] as AgentWorkspaceApprovalRequest[],
   release_tool_execution: null as (() => void) | null,
   context_window: 288_000,
   max_tokens: 32_000,
@@ -181,6 +183,28 @@ const fake_agent_state = vi.hoisted(() => ({
   stream_token_size: 10_000,
   stream_tokens_per_second: undefined as number | undefined,
 }));
+
+/** 普通写入测试的默认审批请求；需要累计风险时由 `write_batches` 覆盖。 */
+function default_write_approval(): AgentWorkspaceApprovalRequest {
+  return {
+    summary: {
+      pages: 0,
+      items: 1,
+      glossary: 0,
+      textPreserve: 0,
+      preReplacement: 0,
+      postReplacement: 0,
+      files: 0,
+      knowledge: 0,
+      prompts: 0,
+      mass_change: 0,
+      mass_items: 1,
+      same_dst: 1,
+    },
+    preview: null,
+    risk: null,
+  };
+}
 
 vi.mock("./agent-skills", async (import_original) => ({
   ...(await import_original<typeof import("./agent-skills")>()),
@@ -556,6 +580,7 @@ describe("AgentService", () => {
   beforeEach(() => {
     fake_agent_state.batch_mode = false;
     fake_agent_state.media_mode = false;
+    fake_agent_state.write_batches = [];
     fake_agent_state.batch_request_on_retry = false;
     fake_agent_state.batch_retries = 0;
     fake_agent_state.mode = "success";
@@ -1011,6 +1036,70 @@ describe("AgentService", () => {
         }),
       ]),
     );
+  });
+
+  it("自动审批在本轮累计重复译文时再次请求确认", async () => {
+    const { service, set_approval_mode } = await create_service();
+    set_approval_mode("auto");
+    fake_agent_state.mode = "write";
+    const request = (): AgentWorkspaceApprovalRequest => ({
+      summary: {
+        pages: 0,
+        items: 60,
+        glossary: 0,
+        textPreserve: 0,
+        preReplacement: 0,
+        postReplacement: 0,
+        files: 0,
+        knowledge: 0,
+        prompts: 0,
+        mass_change: 0,
+        mass_items: 60,
+        same_dst: 60,
+      },
+      preview: {
+        total: 60,
+        file_total: 1,
+        files: [{ path: "items.po", count: 60 }],
+        distinct_dst: 1,
+        top_dst: { text: "Same text", count: 60 },
+        sample: [
+          {
+            item_id: 1,
+            file_path: "items.po",
+            src: "Source",
+            before: "Old",
+            after: "Same text",
+          },
+        ],
+        noop: 0,
+        empty: 0,
+        truncated: true,
+        cumulative: null,
+      },
+      risk: {
+        total: 60,
+        dst_counts: [{ text: "Same text", count: 60 }],
+        project_item_count: 500,
+      },
+    });
+    fake_agent_state.write_batches = [request(), request()];
+
+    await service.send_message({ text: "批量写入", attachments: [] });
+    await vi.waitFor(() =>
+      expect(service.get_snapshot().pendingDecision).toMatchObject({
+        kind: "write_approval",
+        preview: {
+          cumulative: { total: 120, same_dst: 120, risky: true },
+          top_dst: { text: "Same text", count: 60 },
+        },
+      }),
+    );
+    const pending = service.get_snapshot().pendingDecision;
+    if (pending?.kind !== "write_approval") throw new Error("缺少累计写入审批");
+    await service.resolve_write_approval({ id: pending.id, decision: "allow_once" });
+    await wait_for_idle(service);
+    expect(service.get_snapshot().pendingDecision).toBeNull();
   });
 
   it.each(["reset", "project"] as const)("自动审批偏好跨 %s 保留", async (boundary) => {
@@ -4433,16 +4522,15 @@ describe("AgentService", () => {
         return { images: [], execution: workspace_execution({ items: read_items() }) };
       }),
       apply_workspace: vi.fn(async (request_approval) => {
-        await request_approval?.({
-          pages: 0,
-          items: 1,
-          glossary: 0,
-          textPreserve: 0,
-          preReplacement: 0,
-          postReplacement: 0,
-          files: 0,
-          prompts: 0,
-        });
+        const batches =
+          fake_agent_state.write_batches.length > 0
+            ? fake_agent_state.write_batches
+            : [default_write_approval()];
+        for (const batch of batches) {
+          const commit = await request_approval?.(batch);
+          commit?.();
+        }
+        fake_agent_state.write_batches = [];
         await wait_for_held_tool();
         return { status: "applied" };
       }),
