@@ -17,6 +17,7 @@ import type { AgentWorkspacePort } from "../workspace/service";
 import app_package from "../../../../package.json";
 import { UV_DESCRIPTION } from "../uv/description";
 import { NPM_DESCRIPTION } from "../npm/description";
+import { SEARCH_DESCRIPTION } from "../search/description";
 
 const { defaultTimeoutSeconds, minTimeoutSeconds, maxTimeoutSeconds } =
   AGENT_WORKSPACE_RUNTIME_POLICY;
@@ -51,6 +52,7 @@ export function create_agent_workspace_run_tool(options: {
       "- `@lg/*` 是随应用发布的 SDK，在本工具的脚本及其加载的模块中可用。它们不通过 npm 安装：",
       "  - `@lg/uv`：应用随附的 uv，管理共享 Python 工程与执行 Python 程序",
       "  - `@lg/npm`：应用随附的 npm，管理共享 npm 工程与调用包提供的命令行工具",
+      "  - `@lg/search`：网页搜索，调用方式与响应契约见下文",
       "  - `@lg/pdf`、`@lg/pdf/mupdf`：PDF 读取、渲染与打印，用法见 `pdf` 技能",
       "  - `@lg/media`：音视频本地识别、画面文字检测与音频可视化成片，用法见 `media` 技能",
       "  - `@lg/utils/literal-matcher`：应用判定字面命中与规范化文本的规则",
@@ -62,6 +64,8 @@ export function create_agent_workspace_run_tool(options: {
       UV_DESCRIPTION,
       "",
       NPM_DESCRIPTION,
+      "",
+      SEARCH_DESCRIPTION,
       "",
       "### 文件与进程",
       "",
@@ -112,7 +116,7 @@ export function create_agent_workspace_run_tool(options: {
       "",
       "### `@lg/project` 接口",
       "",
-      `调用前先提交必要译文。\`generateFiles(bilingual_files)\` 生成到 \`${AGENT_WORKSPACE_WORK_ROOT}/\` 下的暂存目录，返回本机绝对路径：\`output_path\` 只含已支持格式的可安装产物，\`bilingual_output_path\` 为双语对照，\`excluded_files\` 列出本次跳过的资产。\`writeback.input_path\` 为写回输入目录，\`writeback.files\` 列出仍需格式处理的资产。\`pdf_files\` 报告 PDF 页面结果。生成与交付流程见 \`project-operation\` 技能。`,
+      `调用前先提交必要译文。\`generateFiles(bilingual_files)\` 生成到 \`${AGENT_WORKSPACE_WORK_ROOT}/\` 下的暂存目录，返回本机绝对路径：\`output_path\` 只含已支持格式的可安装产物，\`bilingual_output_path\` 为双语对照，\`excluded_files\` 列出本次跳过的资产。\`writeback.input_path\` 为写回输入目录，\`writeback.files\` 列出仍需格式处理的资产。\`pdf_files\` 报告 PDF 页面结果。导出与交付流程见 \`project-operation\` 技能。`,
       "`getOutputPaths(directory?)` 按应用设置计算交付目录，传入绝对路径时改用该父目录。`manual` 为 `true` 表示用户设置为每次手动选择。返回的目录名已避开现有同名目录，但不会预先创建。",
       `每个通用包是 ZIP，根目录 \`${GENERIC_ITEMS_MEMBER}\` 使用下列结构，其余成员保存解析与写回所需底稿。数组下标是条目行号。写回输入为 \`<writeback.input_path>/<file_path>/${GENERIC_ITEMS_MEMBER}\`，记录数与源数组相同，正文与姓名已确定，私有字段保留。Agent 根据私有定位写回底稿。`,
       "`.media` 包使用同一记录结构，写回输入同样位于 `writeback.input_path`，其余成员与渲染见 `media` 技能。",

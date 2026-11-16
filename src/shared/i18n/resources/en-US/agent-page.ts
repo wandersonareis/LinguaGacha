@@ -15,7 +15,7 @@ export const en_us_agent_page = {
     translation_description:
       "Model used for batch translation. The main model decides when to use it.",
     media_description:
-      "Model used for audio and video recognition. The main model decides when to use it.\nPlease note that <emphasis>most models do not support audio and video input</emphasis>. doubao and gemini are recommended.",
+      "Model used for audio and video recognition. The main model decides when to use it.\n<emphasis>Please note that most models do not support audio and video input. gemini and doubao-seed-lite are recommended.</emphasis>",
     follow: "Follow main model",
   },
   title: "AGENT",
@@ -46,7 +46,7 @@ export const en_us_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "Drag in files or folders to translate …",
+    no_project_placeholder: "Drag in files or folders and translate with one click …!",
     placeholder: "Describe a task, or type @ to select a skill or instruction …",
     edit_assistant_placeholder: "Edit the model response …",
     newline: "New line",
@@ -63,9 +63,9 @@ export const en_us_agent_page = {
     },
     groups: { files: "Files", skills: "Skills", instructions: "Instructions" },
     instructions: {
-      generate_translation: {
+      export_translation: {
         description:
-          "Generate translated files or a localization patch from the project's translation data",
+          "Export documents, subtitles, game files and other outputs using the existing translations in the project",
       },
       update_file: {
         title: "Update files",

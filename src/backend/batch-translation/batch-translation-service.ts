@@ -1,3 +1,6 @@
+import type { LogManager } from "../log/log-manager";
+import { create_text_resolver } from "../../shared/i18n";
+import { resolve_app_locale } from "../../domain/app-language";
 import type { ProjectSessionState } from "../project/project-session-state";
 import type {
   BatchTranslationRunner,
@@ -38,6 +41,7 @@ export class BatchTranslationService {
     private readonly session: ProjectSessionState,
     private readonly settings: Pick<AppSettingService, "read_setting">,
     private readonly languages: CacheReadPort["languages"], // 已提交的项目语言
+    private readonly log: Pick<LogManager, "append">,
     private readonly snapshots?: Pick<ProjectSnapshotService, "create">,
   ) {}
   /** 读取当前工程的完整翻译快照。 */
@@ -68,10 +72,7 @@ export class BatchTranslationService {
         : {}),
     };
     const handle = this.runtime.begin_standalone(run_command.operation);
-    await this.runtime.execute(handle, () =>
-      this.runner.run(handle, run_command, this.read_run_context()),
-    );
-    return handle;
+    return this.execute(handle, run_command);
   }
   /** 当前 Agent lease 内启动，并等待本轮完整收尾。 */
   public async run_under_agent(
@@ -109,11 +110,45 @@ export class BatchTranslationService {
       protect: true,
     });
     const handle = this.runtime.begin_under_agent(lease, signal, command.operation);
-    await this.runtime.execute(handle, () =>
-      this.runner.run(handle, command, this.read_run_context(model)),
-    );
-    return await handle.completion;
+    return await (
+      await this.execute(handle, command, model)
+    ).completion;
   }
+  /** 完成链包含进度和事件收尾，错误诊断之后统一输出结束提示。 */
+  private async execute(
+    handle: BatchTranslationRunHandle,
+    command: BatchTranslationRunCommand,
+    model?: Model,
+  ): Promise<BatchTranslationRunHandle> {
+    let app_language: unknown;
+    const completion = handle.completion
+      .catch((error: unknown) => {
+        this.log.append({
+          level: "error",
+          source: "engine",
+          content:
+            command.operation === "retranslate" ? "重翻任务执行失败。" : "翻译任务执行失败。",
+          error,
+        });
+        throw error;
+      })
+      .finally(() => {
+        const t = create_text_resolver(resolve_app_locale(app_language));
+        this.log.append({
+          level: "info",
+          source: "engine",
+          content: t("app.log.batch_translation_ended"),
+        });
+      });
+    void completion.catch(() => undefined); // 独立入口只返回受理，调用方可稍后等待完成。
+    await this.runtime.execute(handle, () => {
+      const context = this.read_run_context(model);
+      app_language = context.config_snapshot.app_language;
+      return this.runner.run(handle, command, context);
+    });
+    return Object.freeze({ ...handle, completion });
+  }
+
   /** 运行 lease 内组合应用设置与项目语言并准备模型，本轮执行固定使用该快照。 */
   private read_run_context(model?: Model): BatchTranslationRunContext {
     const settings = this.settings.read_setting();

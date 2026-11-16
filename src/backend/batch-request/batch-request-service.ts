@@ -1,3 +1,4 @@
+import { log_batch_task_start, log_batch_request_failure } from "../batch-task/batch-task-log";
 import { build_batch_request_result_log } from "./batch-request-log";
 import { create_text_resolver } from "../../shared/i18n";
 import { resolve_app_locale } from "../../domain/app-language";
@@ -15,9 +16,17 @@ import {
 import { default_native_fs as fs } from "../../native/native-fs";
 import type { RuntimeLease } from "../runtime-operation-gate";
 import type { ChatGPTAuthService } from "../auth/chatgpt-auth-service";
-import { read_model_request_snapshot, read_request_timeout_ms } from "../llm/llm-request";
-import type { LLMClientPort, LLMMessage, LLMRequestFacts } from "../llm/llm-types";
-import { NATIVE_REQUEST_MAX_BYTES, NativeResponsesClient } from "../llm/native-responses";
+import {
+  LLM_REQUEST_MAX_BYTES,
+  read_model_request_snapshot,
+  read_request_timeout_ms,
+} from "../llm/llm-request";
+import type {
+  LLMClientPort,
+  LLMMessage,
+  LLMRequestFacts,
+  LLMRequestResult,
+} from "../llm/llm-types";
 import { BatchTaskRuntime, BatchTaskCompletionError } from "../batch-task/batch-task-runtime";
 import { RequestRatePool, resolve_request_limits } from "../batch-task/request-rate";
 import { RequestScheduler } from "../batch-task/request-scheduler";
@@ -26,7 +35,7 @@ const BATCH_REQUEST_LOG_SOURCE = "batch-request";
 
 const BATCH_REQUEST_MANIFEST_SCHEMA = Type.Object(
   {
-    format: Type.Union([Type.Literal("messages"), Type.Literal("responses")]),
+    format: Type.Literal("messages"),
     requests: Type.Array(
       Type.Object(
         { id: Type.String({ minLength: 1 }), input_file: Type.String({ minLength: 1 }) },
@@ -37,18 +46,44 @@ const BATCH_REQUEST_MANIFEST_SCHEMA = Type.Object(
   },
   { additionalProperties: false },
 );
+const BASE64_PATTERN = "^[A-Za-z0-9+/]+={0,2}$";
+/** 三类媒体共享字节契约，MIME 前缀与内容类型一致。 */
+function media_content_schema(type: "image" | "audio" | "video") {
+  return Type.Object(
+    {
+      type: Type.Literal(type),
+      mime_type: Type.String({ pattern: `^${type}/[A-Za-z0-9.+-]+$` }),
+      data: Type.String({ minLength: 4, pattern: BASE64_PATTERN }),
+    },
+    { additionalProperties: false },
+  );
+}
+const CONTENT_SCHEMA = Type.Union([
+  Type.Object({ type: Type.Literal("text"), text: Type.String() }, { additionalProperties: false }),
+  media_content_schema("image"),
+  media_content_schema("audio"),
+  media_content_schema("video"),
+]);
+const LLM_MESSAGES_SCHEMA = Type.Array(
+  Type.Union([
+    Type.Object(
+      { role: Type.Literal("system"), content: Type.String() },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        role: Type.Literal("user"),
+        content: Type.Union([Type.String(), Type.Array(CONTENT_SCHEMA, { minItems: 1 })]),
+      },
+      { additionalProperties: false },
+    ),
+  ]),
+  { minItems: 1 },
+);
+
 const MESSAGES_SCHEMA = Type.Object(
   {
-    messages: Type.Array(
-      Type.Object(
-        {
-          role: Type.Union([Type.Literal("system"), Type.Literal("user")]),
-          content: Type.String(),
-        },
-        { additionalProperties: false },
-      ),
-      { minItems: 1 },
-    ),
+    messages: LLM_MESSAGES_SCHEMA,
   },
   { additionalProperties: false },
 );
@@ -90,10 +125,10 @@ async function read_batch_request_json(file: string): Promise<unknown> {
   const handle = await fs.open_file(file, "r");
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > NATIVE_REQUEST_MAX_BYTES)
+    if (!stat.isFile() || stat.size > LLM_REQUEST_MAX_BYTES)
       throw new Error("Input must be a JSON file no larger than 64 MB.");
     const body = await handle.readFile();
-    if (body.byteLength > NATIVE_REQUEST_MAX_BYTES) throw new Error("Input exceeds 64 MB.");
+    if (body.byteLength > LLM_REQUEST_MAX_BYTES) throw new Error("Input exceeds 64 MB.");
     return JSON.parse(body.toString("utf8"));
   } finally {
     await handle.close();
@@ -107,12 +142,11 @@ async function publish_json(file: string, value: unknown): Promise<void> {
 }
 /** 通用请求只拥有工作区成果，批次生命周期和网络恢复均使用共享服务。 */
 export class BatchRequestService {
-  /** 注入唯一运行态、速率池与两个传输入口。 */
+  /** 注入唯一运行态、速率池与统一请求入口。 */
   public constructor(
     private readonly tasks: BatchTaskRuntime,
     private readonly rates: RequestRatePool,
     private readonly client: LLMClientPort,
-    private readonly native: NativeResponsesClient,
     private readonly auth: Pick<ChatGPTAuthService, "bind">,
     private readonly log: Pick<LogManager, "append">,
   ) {}
@@ -129,6 +163,12 @@ export class BatchRequestService {
     const t = create_text_resolver(resolve_app_locale(settings["app_language"]));
     const model_config_id = String(model["id"] ?? "");
     const config = read_model_request_snapshot(model, { user_agent: "" });
+    const secrets = [...config.api_keys, ...Object.values(config.headers)].filter(Boolean);
+    /** 在发布前清除响应和错误中回显的凭据。 */
+    const redact = (_key: string, value: unknown): unknown =>
+      typeof value === "string"
+        ? secrets.reduce((text, secret) => text.replaceAll(secret, "[REDACTED]"), value)
+        : value;
     const manifest_path = path.resolve(root, request_file);
     const raw = await read_batch_request_json(manifest_path);
     if (!Check(BATCH_REQUEST_MANIFEST_SCHEMA, raw))
@@ -136,11 +176,6 @@ export class BatchRequestService {
         "Invalid request manifest. Expected format and nonempty requests with id/input_file.",
       );
     const manifest = raw;
-    if (
-      manifest.format === "responses" &&
-      (config.api_format !== "OpenAIResponses" || config.auth_type !== "api_key")
-    )
-      throw new AppError("model.responses_incompatible");
     const ids = new Set<string>();
     for (const entry of manifest.requests) {
       if (!entry.id.trim() || ids.has(entry.id))
@@ -176,39 +211,6 @@ export class BatchRequestService {
       usage: result.progress,
       result_file,
     });
-    /** 批次日志采用完成链的最终状态，包含发布或事件收尾失败。 */
-    const log_end = (result: BatchTaskResult, error?: unknown) => {
-      const value = summary(result);
-      this.log.append({
-        source: BATCH_REQUEST_LOG_SOURCE,
-        level:
-          result.status === "error"
-            ? "error"
-            : result.status === "stopped" || value.failed > 0
-              ? "warning"
-              : "info",
-        content: [
-          t("app.log.task_finished", {
-            RUN: handle.run_id,
-            STATUS: result.status,
-            SUCCEEDED: String(value.succeeded),
-            FAILED: String(value.failed),
-            UNFINISHED: String(value.unfinished),
-            STOP: result.stop_source ?? "—",
-            PATH: result_file,
-          }),
-          t("app.log.task_stats", {
-            COUNT: String(value.total),
-            TIME: (result.progress?.time ?? 0).toFixed(2),
-            PT: String(result.progress?.input_tokens ?? 0),
-            RT: String(result.progress?.reasoning_tokens ?? 0),
-            CT: String(result.progress?.output_tokens ?? 0),
-          }),
-          ...(result.progress?.usage_complete === true ? [] : [t("app.log.usage_incomplete")]),
-        ].join("\n"),
-        ...(error === undefined ? {} : { error }),
-      });
-    };
     let directory_ready = false; // 目录建立后才尝试发布最终索引。
     try {
       await this.tasks.execute(
@@ -231,19 +233,7 @@ export class BatchRequestService {
             ...manifest,
             config: config_summary,
           });
-          this.log.append({
-            source: BATCH_REQUEST_LOG_SOURCE,
-            level: "info",
-            content: t("app.log.task_started", {
-              RUN: handle.run_id,
-              NAME: config_summary.model_name,
-              MODEL: config.model_id,
-              FORMAT: manifest.format,
-              TOTAL: String(indexes.length),
-              CONCURRENCY: String(limits.concurrency_limit),
-              RPM: String(limits.rpm_limit),
-            }),
-          });
+          log_batch_task_start(this.log, BATCH_REQUEST_LOG_SOURCE, model, t);
           await this.tasks.publish_config(handle, config_summary);
           await this.tasks.publish_progress(handle, progress);
           await this.tasks.publish_status(handle, "running");
@@ -258,17 +248,7 @@ export class BatchRequestService {
             rate: this.rates.resolve(model),
             timeout_ms: read_request_timeout_ms(settings),
             dispatch: async ({ id, payload }, key, request_signal) => {
-              if (manifest.format === "responses")
-                return this.native.request(
-                  {
-                    payload,
-                    model: { ...model, api_key: key },
-                    config_snapshot: settings,
-                    run_id: handle.run_id,
-                  },
-                  request_signal,
-                );
-              const result = await this.client.request(
+              const received = await this.client.request(
                 {
                   run_id: handle.run_id,
                   work_unit_id: id,
@@ -279,6 +259,15 @@ export class BatchRequestService {
                 },
                 request_signal,
               );
+              // 在发布和日志前脱敏所有字符串，JSON replacer 不会破坏转义或响应结构。
+              const result = JSON.parse(JSON.stringify(received, redact)) as LLMRequestResult;
+              // 确定性的请求错误结束重试。认证失败交给批次收尾，其余拒绝只失败当前项。
+              const rejected =
+                result.http_status !== undefined &&
+                result.http_status >= 400 &&
+                result.http_status < 500 &&
+                ![408, 429].includes(result.http_status);
+              const account_failure = result.http_status === 401 || result.http_status === 403;
               return {
                 ...result,
                 response: {
@@ -287,7 +276,11 @@ export class BatchRequestService {
                   thinking: result.response_think,
                 },
                 usage_complete: result.usage_complete ?? false,
-                item_failure: result.response_error !== undefined,
+                item_failure:
+                  result.response_error !== undefined ||
+                  result.request_error?.context?.["code"] === "request.validation_failed" ||
+                  (rejected && !account_failure),
+                ...(rejected ? { retryable: false } : {}),
               };
             },
             fail_batch: (result) => !result.item_failure,
@@ -302,28 +295,18 @@ export class BatchRequestService {
             },
             on_state: (state) => this.tasks.update_request_state(handle, state),
             on_failure: (key_index, error) =>
-              this.log.append({
-                source: BATCH_REQUEST_LOG_SOURCE,
-                level: "warning",
-                error,
-                content: `${handle.run_id} · ${t("app.log.request_failed", { ERROR: error.message })} (Key ${key_index + 1})`,
-              }),
+              log_batch_request_failure(this.log, BATCH_REQUEST_LOG_SOURCE, key_index, error, t),
           });
           /** 单项正文错误单独结算，文件发布错误交给整批收尾。 */
           const run_one = async (index: number) => {
             const entry = manifest.requests[index]!;
             const started_at = Date.now();
-            let publishing = false; // 区分请求失败与成果发布失败。
             let result: RequestResult | undefined;
             let error: string | null = null;
             let payload: JsonRecord | undefined;
             let input_error: unknown;
             /** 每项只记录一次结果，完整响应保存在成果文件中。 */
-            const log_result = (
-              failure: string | null,
-              result_file: string | null,
-              cause?: unknown,
-            ) =>
+            const log_result = (failure: string | null, cause?: unknown) =>
               this.log.append({
                 source: BATCH_REQUEST_LOG_SOURCE,
                 level: failure === null ? "info" : "error",
@@ -332,11 +315,9 @@ export class BatchRequestService {
                   request_id: entry.id,
                   model_id: config.model_id,
                   started_at,
-                  format: manifest.format,
                   payload,
                   result,
                   error: failure,
-                  result_file,
                   t,
                 }),
                 ...(cause === undefined ? {} : { error: cause }),
@@ -348,7 +329,14 @@ export class BatchRequestService {
                 const raw_input = await read_batch_request_json(entry.input_file);
                 if (
                   !is_json_record(raw_input) ||
-                  (manifest.format === "messages" && !Check(MESSAGES_SCHEMA, raw_input))
+                  !Check(MESSAGES_SCHEMA, raw_input) ||
+                  raw_input.messages.some(
+                    (message) =>
+                      Array.isArray(message.content) &&
+                      message.content.some(
+                        (part) => part.type !== "text" && part.data.length % 4 !== 0,
+                      ),
+                  )
                 )
                   throw new Error("Invalid request input.");
                 payload = raw_input;
@@ -366,7 +354,6 @@ export class BatchRequestService {
                   (result.item_failure ? "Request failed." : null);
               }
               status = error === null ? "succeeded" : "failed";
-              publishing = true;
               await publish_json(path.join(directory, relative), {
                 id: entry.id,
                 status,
@@ -380,10 +367,7 @@ export class BatchRequestService {
                         complete: result.usage_complete,
                       },
                 error,
-                response:
-                  manifest.format === "responses"
-                    ? { format: "responses", raw: result?.response ?? null }
-                    : (result?.response ?? null),
+                response: result?.response ?? null,
               });
             } catch (cause) {
               if (
@@ -394,11 +378,7 @@ export class BatchRequestService {
                 )
               ) {
                 const message = cause instanceof Error ? cause.message : String(cause);
-                log_result(
-                  publishing ? t("app.log.publish_failed", { ERROR: message }) : message,
-                  null,
-                  cause,
-                );
+                log_result(message, cause);
               }
               throw cause;
             }
@@ -410,11 +390,7 @@ export class BatchRequestService {
               failed: progress.failed + Number(status === "failed"),
               time: Date.now() / 1000 - progress.start_time,
             };
-            log_result(
-              error,
-              path.join(directory, relative),
-              result?.request_error ?? result?.response_error ?? input_error,
-            );
+            log_result(error, result?.request_error ?? result?.response_error ?? input_error);
             await this.tasks.publish_progress(handle, progress);
           };
           const pending = new Set<Promise<void>>(); // 成功请求释放额度，失败请求保留到统一收尾。
@@ -470,14 +446,26 @@ export class BatchRequestService {
         },
       );
       const result = await handle.completion;
-      log_end(result);
       return summary(result);
     } catch (error) {
       if (error instanceof BatchTaskCompletionError) {
-        log_end(error.result, error.cause);
+        this.log.append({
+          source: BATCH_REQUEST_LOG_SOURCE,
+          level: "error",
+          content: t("app.log.request_failed", {
+            ERROR: error.cause instanceof Error ? error.cause.message : String(error.cause),
+          }),
+          error: error.cause,
+        });
         throw new BatchRequestCompletionError(summary(error.result), error.cause);
       }
       throw error;
+    } finally {
+      this.log.append({
+        source: BATCH_REQUEST_LOG_SOURCE,
+        level: "info",
+        content: t("app.log.batch_request_ended"),
+      });
     }
   }
 }

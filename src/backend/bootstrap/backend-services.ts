@@ -1,5 +1,4 @@
 import { BatchRequestService } from "../batch-request/batch-request-service";
-import { NativeResponsesClient } from "../llm/native-responses";
 import { BatchTaskRuntime } from "../batch-task/batch-task-runtime";
 import { RequestRatePool } from "../batch-task/request-rate";
 import { ProjectKnowledgeService } from "../project/project-knowledge-service";
@@ -271,7 +270,6 @@ export class BackendServices {
       this.batchTasks,
       this.request_rate_pool,
       llm_client,
-      new NativeResponsesClient(user_agent, this.modelCatalog),
       this.modelAuth,
       this.logManager,
     );
@@ -432,6 +430,7 @@ export class BackendServices {
       session_state,
       this.app_setting_service,
       this.cache_manager.languages,
+      this.logManager,
       this.projectSnapshots,
     );
     this.state = {

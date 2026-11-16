@@ -14,7 +14,7 @@ export const zh_cn_agent_page = {
     agent_description: "任务流程的主控模型",
     translation_description: "批量翻译时使用的模型，由主控模型判断使用时机",
     media_description:
-      "音视频识别时使用的模型，由主控模型判断使用时机\n请注意，<emphasis>大多数模型不支持音视频输入</emphasis>，推荐使用 doubao gemini",
+      "音视频识别时使用的模型，由主控模型判断使用时机\n<emphasis>请注意，大多数模型不支持音视频输入，推荐使用 gemini 与 doubao-seed-lite</emphasis>",
     follow: "跟随主控模型",
   },
   title: "AGENT",
@@ -45,7 +45,7 @@ export const zh_cn_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "请拖入作为翻译目标的文件或文件夹 …",
+    no_project_placeholder: "请拖入作为翻译目标的文件或文件夹，一键翻译 …!",
     placeholder: "描述任务，或输入 @ 选择技能或指令 …",
     edit_assistant_placeholder: "修改模型回复 …",
     newline: "换行",
@@ -62,8 +62,8 @@ export const zh_cn_agent_page = {
     },
     groups: { files: "文件", skills: "技能", instructions: "指令" },
     instructions: {
-      generate_translation: {
-        description: "使用工程内的译文数据生成译文文件或汉化补丁",
+      export_translation: {
+        description: "使用工程中已有译文，导出文档、字幕、游戏文件等翻译成果",
       },
       update_file: {
         title: "更新文件",

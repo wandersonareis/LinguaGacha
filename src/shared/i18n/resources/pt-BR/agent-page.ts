@@ -15,7 +15,7 @@ export const pt_br_agent_page = {
     translation_description:
       "Modelo usado para tradução em lote. O modelo principal decide quando usá-lo.",
     media_description:
-      "Modelo usado para reconhecimento de áudio e vídeo. O modelo principal decide quando usá-lo.\nObserve que <emphasis>a maioria dos modelos não aceita entradas de áudio e vídeo</emphasis>. Recomendamos doubao e gemini.",
+      "Modelo usado para reconhecimento de áudio e vídeo. O modelo principal decide quando usá-lo.\n<emphasis>Observe que a maioria dos modelos não aceita entradas de áudio e vídeo. Recomendamos gemini e doubao-seed-lite.</emphasis>",
     follow: "Seguir modelo principal",
   },
   title: "AGENT",
@@ -46,7 +46,7 @@ export const pt_br_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "Arraste arquivos ou pastas para traduzir …",
+    no_project_placeholder: "Arraste arquivos ou pastas e traduza com um clique …!",
     placeholder: "Descreva uma tarefa ou digite @ para selecionar uma habilidade ou instrução …",
     edit_assistant_placeholder: "Editar a resposta do modelo …",
     newline: "Nova linha",
@@ -63,9 +63,9 @@ export const pt_br_agent_page = {
     },
     groups: { files: "Arquivos", skills: "Habilidades", instructions: "Instruções" },
     instructions: {
-      generate_translation: {
+      export_translation: {
         description:
-          "Gera arquivos traduzidos ou um patch de tradução a partir dos dados de tradução do projeto",
+          "Exporte documentos, legendas, arquivos de jogos e outros resultados usando as traduções existentes no projeto",
       },
       update_file: {
         title: "Atualizar arquivos",

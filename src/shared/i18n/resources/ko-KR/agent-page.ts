@@ -16,7 +16,7 @@ export const ko_kr_agent_page = {
     agent_description: "작업 흐름을 제어하는 주 모델",
     translation_description: "일괄 번역에 사용하는 모델입니다. 주 모델이 사용 시점을 판단합니다.",
     media_description:
-      "오디오 및 비디오 인식에 사용하는 모델입니다. 주 모델이 사용 시점을 판단합니다.\n<emphasis>대부분의 모델은 오디오 및 비디오 입력을 지원하지 않습니다</emphasis>. 이 점에 유의하세요. doubao와 gemini를 권장합니다.",
+      "오디오 및 비디오 인식에 사용하는 모델입니다. 주 모델이 사용 시점을 판단합니다.\n<emphasis>대부분의 모델은 오디오 및 비디오 입력을 지원하지 않는다는 점에 유의하세요. gemini와 doubao-seed-lite를 권장합니다.</emphasis>",
     follow: "주 모델 따르기",
   },
   title: "AGENT",
@@ -47,7 +47,7 @@ export const ko_kr_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "번역할 파일이나 폴더를 끌어다 놓으세요 …",
+    no_project_placeholder: "번역할 파일이나 폴더를 끌어다 놓고 클릭 한 번으로 번역하세요 …!",
     placeholder: "작업을 설명하거나 @를 입력해 스킬 또는 명령을 선택하세요 …",
     edit_assistant_placeholder: "모델 응답 수정 …",
     newline: "줄 바꿈",
@@ -64,8 +64,9 @@ export const ko_kr_agent_page = {
     },
     groups: { files: "파일", skills: "스킬", instructions: "명령" },
     instructions: {
-      generate_translation: {
-        description: "프로젝트의 번역문 데이터로 번역문 파일 또는 현지화 패치를 생성합니다",
+      export_translation: {
+        description:
+          "프로젝트에 저장된 기존 번역문으로 문서, 자막, 게임 파일 등의 번역 결과물 내보내기",
       },
       update_file: {
         title: "파일 업데이트",

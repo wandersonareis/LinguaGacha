@@ -1,6 +1,6 @@
 import { ProjectLifecycleProvider } from "@frontend/app/session/project-lifecycle/project-lifecycle-provider";
 import { push_error_toast } from "@frontend/app/feedback/desktop-toast";
-import { TranslationGenerationProvider } from "@frontend/app/session/translation-generation/translation-generation-provider";
+import { TranslationExportProvider } from "@frontend/app/session/translation-export/translation-export-provider";
 import { PageLeaveProvider } from "@frontend/app/navigation/page-leave-provider";
 import { usePageLeave } from "@frontend/app/navigation/page-leave-context";
 import { AppContentState } from "@frontend/widgets/app-content-state";
@@ -41,7 +41,7 @@ import {
   useBatchTranslationSnapshot,
 } from "@frontend/app/state/use-desktop-state";
 import { DesktopProgressToast } from "@frontend/app/feedback/desktop-progress-toast";
-import { AgentCompletionAttention } from "@frontend/app/feedback/agent-completion-attention";
+import { AgentAttention } from "@frontend/app/feedback/agent-attention";
 import "@frontend/app/shell/app-shell.css";
 import type { AgentInputRequest, RouteId } from "@frontend/app/navigation/types";
 import { LocaleProvider } from "@frontend/app/locale/locale-provider";
@@ -459,10 +459,10 @@ function AppContent(): JSX.Element {
                   clear_agent_input_request={() => set_agent_input_request(null)}
                 >
                   <AgentChatProvider>
-                    <AgentCompletionAttention />
+                    <AgentAttention />
                     <ProjectSessionUiStateProvider>
                       <ProjectLifecycleProvider>
-                        <TranslationGenerationProvider>
+                        <TranslationExportProvider>
                           <ProjectTranslationStatsProvider>
                             <BatchTaskSessionProvider>
                               <QualityRuleStatisticsProvider>
@@ -470,7 +470,7 @@ function AppContent(): JSX.Element {
                               </QualityRuleStatisticsProvider>
                             </BatchTaskSessionProvider>
                           </ProjectTranslationStatsProvider>
-                        </TranslationGenerationProvider>
+                        </TranslationExportProvider>
                       </ProjectLifecycleProvider>
                     </ProjectSessionUiStateProvider>
                   </AgentChatProvider>

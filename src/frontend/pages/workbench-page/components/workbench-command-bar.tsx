@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { build_translation_task_summary_display } from "@frontend/features/batch-task/batch-task-display";
+import { build_batch_task_summary_display } from "@frontend/features/batch-task/batch-task-display";
 import { FileInput, FilePlus2, SquarePower, Trash2, type LucideIcon } from "lucide-react";
 
 import { useActionShortcut } from "@frontend/widgets/interactions/use-action-shortcut";
@@ -30,16 +30,16 @@ type WorkbenchCommandBarProps = {
   translation_stats: ProjectTranslationStats | null;
   can_edit_files: boolean;
   can_delete_selected_files: boolean;
-  can_generate_translation: boolean;
+  can_export_translation: boolean;
   can_close_project: boolean;
   on_add_file: () => void;
   on_delete_selected: () => void;
-  on_generate_translation: () => void;
+  on_export_translation: () => void;
   on_close_project: () => void;
 };
 
 type CommandAction = {
-  id: "add-file" | "delete-file" | "generate-translation" | "close-project";
+  id: "add-file" | "delete-file" | "export-translation" | "close-project";
   icon: LucideIcon;
   label_key: LocaleKey;
   shortcut?: ShortcutAction;
@@ -53,7 +53,11 @@ export function WorkbenchCommandBar(props: WorkbenchCommandBarProps): JSX.Elemen
   const model_selection = useModelSelection();
   const active_translation_task_action_kind: TranslationTaskActionKind | null =
     props.batch_task.task_confirm_state?.kind ?? null;
-  const summary = build_translation_task_summary_display(props.batch_task.task_metrics, t);
+  const summary = build_batch_task_summary_display({
+    metrics: props.batch_task.task_metrics,
+    kind: props.batch_task.task_display_snapshot?.kind ?? null,
+    t,
+  });
   const add_file_disabled = !props.can_edit_files;
   const delete_file_disabled = !props.can_delete_selected_files;
   const actions: CommandAction[] = [
@@ -74,11 +78,11 @@ export function WorkbenchCommandBar(props: WorkbenchCommandBarProps): JSX.Elemen
       on_click: props.on_delete_selected,
     },
     {
-      id: "generate-translation",
+      id: "export-translation",
       icon: FileInput,
-      label_key: "app.translation_generation.action",
-      disabled: !props.can_generate_translation,
-      on_click: props.on_generate_translation,
+      label_key: "app.translation_export.action",
+      disabled: !props.can_export_translation,
+      on_click: props.on_export_translation,
     },
     {
       id: "close-project",

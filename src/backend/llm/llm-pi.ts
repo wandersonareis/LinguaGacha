@@ -16,9 +16,14 @@ import type { OpenAICompletionsOptions } from "@earendil-works/pi-ai/api/openai-
 import type { AnthropicOptions } from "@earendil-works/pi-ai/api/anthropic-messages";
 
 import { AppError } from "../../shared/error";
-import { resolve_one_shot_generation_options, type ModelRequestSnapshot } from "./llm-request";
+import {
+  LLM_REQUEST_MAX_BYTES,
+  resolve_one_shot_generation_options,
+  type ModelRequestSnapshot,
+} from "./llm-request";
 import { apply_request_overrides } from "./llm-payload";
 import type { LLMMessage } from "./llm-types";
+import { apply_message_content } from "./llm-content";
 import { resolve_pi_thinking_level, type ResolvedModelCapability } from "./model-capability";
 
 // Pi provider 身份只用于 adapter 与模型集合注册，项目策略直接使用 api_format。
@@ -155,12 +160,27 @@ export function resolve_one_shot_pi_request(
       ? { reasoning: resolved.thinkingLevel }
       : {}),
     ...(snapshot.api_format === "Anthropic" ? { interleavedThinking: false } : {}),
-    onPayload: (payload, active_model) =>
-      apply_request_overrides(snapshot, payload, {
-        compat: active_model.compat,
-        request: capability.request,
-        one_shot_signal: signal,
-      }),
+    onPayload: (payload, active_model) => {
+      const result = apply_request_overrides(
+        snapshot,
+        apply_message_content(payload, snapshot.api_format, messages, capability.request),
+        {
+          compat: active_model.compat,
+          request: capability.request,
+          one_shot_signal: signal,
+        },
+      );
+      if (
+        messages.some((message) => Array.isArray(message.content)) &&
+        Buffer.byteLength(JSON.stringify(result)) > LLM_REQUEST_MAX_BYTES
+      )
+        throw new AppError("request.validation_failed", {
+          message: "Request exceeds 64 MB.",
+          public_details: { field: "messages" },
+          diagnostic_context: { reason: "request_too_large" },
+        });
+      return result;
+    },
   };
   // Google / Anthropic 由 `streamSimple` 转换思考等级，OpenAI 直接调用以保留自动输出上限语义。
   const provider_stream =
@@ -210,8 +230,12 @@ function build_pi_context(snapshot: ModelRequestSnapshot, messages: LLMMessage[]
     .join("\n\n");
   const user_messages = messages
     .filter((message) => message.role === "user")
-    .map((message) => message.content.trim())
-    .filter(Boolean)
+    .map((message) =>
+      typeof message.content === "string"
+        ? message.content.trim()
+        : message.content.filter((part) => part.type === "text"),
+    )
+    .filter((content) => typeof content !== "string" || content.length > 0)
     .map((content) => ({ role: "user" as const, content, timestamp: 0 }));
 
   if (snapshot.api_format === "Google") {

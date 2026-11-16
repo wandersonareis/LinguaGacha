@@ -15,7 +15,7 @@ export const de_de_agent_page = {
     translation_description:
       "Modell für Stapelübersetzungen. Das Hauptmodell entscheidet, wann es eingesetzt wird.",
     media_description:
-      "Modell für Audio- und Videoerkennung. Das Hauptmodell entscheidet, wann es eingesetzt wird.\nBitte beachten Sie, dass <emphasis>die meisten Modelle keine Audio- und Videoeingaben unterstützen</emphasis>. Empfohlen werden doubao und gemini.",
+      "Modell für Audio- und Videoerkennung. Das Hauptmodell entscheidet, wann es eingesetzt wird.\n<emphasis>Bitte beachten Sie, dass die meisten Modelle keine Audio- und Videoeingaben unterstützen. Empfohlen werden gemini und doubao-seed-lite.</emphasis>",
     follow: "Hauptmodell folgen",
   },
   title: "AGENT",
@@ -46,7 +46,7 @@ export const de_de_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "Dateien oder Ordner zum Übersetzen hierher ziehen …",
+    no_project_placeholder: "Dateien oder Ordner hierher ziehen und mit einem Klick übersetzen …!",
     placeholder: "Aufgabe beschreiben oder mit @ einen Skill oder Befehl wählen …",
     edit_assistant_placeholder: "Modellantwort bearbeiten …",
     newline: "Neue Zeile",
@@ -63,9 +63,9 @@ export const de_de_agent_page = {
     },
     groups: { files: "Dateien", skills: "Skills", instructions: "Befehle" },
     instructions: {
-      generate_translation: {
+      export_translation: {
         description:
-          "Übersetzungsdateien oder einen Lokalisierungspatch aus den Übersetzungsdaten des Projekts erstellen",
+          "Dokumente, Untertitel, Spieldateien und weitere Ergebnisse mit den vorhandenen Projektübersetzungen exportieren",
       },
       update_file: {
         title: "Dateien aktualisieren",

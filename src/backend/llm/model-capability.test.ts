@@ -119,7 +119,9 @@ describe("统一模型能力", () => {
         "HIGH",
       ]);
       expect(capability.request).toEqual(
-        api_format === "OpenAIResponses" ? { supports_reasoning_summary: false } : undefined,
+        api_format === "OpenAIResponses"
+          ? { responses_audio_format: "audio_url", supports_reasoning_summary: false }
+          : undefined,
       );
     },
   );
@@ -204,9 +206,13 @@ describe("统一模型能力", () => {
   );
 
   it("模型配置归一化时把失效等级调整为更低或最低可用等级", () => {
+    expect(adjust_model_thinking_level("MEDIUM", ["DEFAULT", "LOW", "MEDIUM", "HIGH"])).toBe(
+      "MEDIUM",
+    );
+    expect(adjust_model_thinking_level("MEDIUM", ["DEFAULT", "OFF", "LOW", "HIGH"])).toBe("LOW");
+    expect(adjust_model_thinking_level("MEDIUM", ["DEFAULT"])).toBe("DEFAULT");
     expect(adjust_model_thinking_level("MAX", ["OFF", "LOW", "HIGH"])).toBe("HIGH");
     expect(adjust_model_thinking_level("LOW", ["HIGH", "MAX"])).toBe("HIGH");
-    expect(adjust_model_thinking_level("HIGH", ["DEFAULT"])).toBe("DEFAULT");
   });
 
   it("地址、协议与模型共同授权端点扩展，名称回退只保留模型适配", () => {

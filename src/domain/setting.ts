@@ -65,9 +65,9 @@ export const SETTING_SNAPSHOT_SCHEMA = Type.Object(
       maximum: PROJECT_BACKUP_INTERVAL_MAX,
     }), // 用户定时的 full 备份间隔（小时）。
     project_backup_directory: Type.String(), // 空 = .lg 同目录；否则用户选择的备份目录。
-    translation_save_mode: Type.Enum(TRANSLATION_SAVE_MODES), // GUI 译文生成的保存位置策略。
+    translation_save_mode: Type.Enum(TRANSLATION_SAVE_MODES), // GUI 翻译成果导出的保存位置策略。
     translation_fixed_path: Type.String(), // 译文固定模式使用的输出父目录。
-    output_folder_open_on_finish: Type.Boolean(), // 译文生成成功后是否打开输出目录。
+    output_folder_open_on_finish: Type.Boolean(), // 翻译成果导出成功后是否打开输出目录。
     request_timeout: Type.Number(), // 等待模型回复的超时时间，单位为秒。
     preceding_lines_threshold: Type.Integer({
       minimum: CONTEXT_LINES_THRESHOLD_MIN,

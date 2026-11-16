@@ -12,17 +12,15 @@ function result_log(input: Partial<Parameters<typeof build_batch_request_result_
     request_id: "one",
     model_id: "test-model",
     started_at: Date.now(),
-    format: "messages",
     payload: undefined,
     result: undefined,
     error: null,
-    result_file: null,
     t,
     ...input,
   });
 }
 
-it("消息日志分离输入、思考与回复，保留成果路径和失败原因", () => {
+it("消息日志分离输入、思考与回复，摘要记录服务模型并保留失败原因", () => {
   const content = result_log({
     payload: { messages: [{ role: "user", content: "question" }] },
     result: {
@@ -34,54 +32,38 @@ it("消息日志分离输入、思考与回复，保留成果路径和失败原�
       cancelled: false,
       timeout: false,
     },
-    result_file: "/result.json",
   });
   expect(content.sections).toEqual([
     { title: t("app.log.request_messages"), text: "user: question" },
     { title: t("app.log.thinking_process"), text: "reasoning" },
     { title: t("app.log.model_response"), text: "answer" },
   ]);
-  expect(content.summary).toContain("/result.json");
-  expect(content.summary).not.toContain(t("app.log.usage_incomplete"));
+  expect(content.summary).toEqual([
+    "run / one",
+    `${t("app.log.model_id")} - test-model`,
+    expect.stringContaining(t("app.log.all_succeeded")),
+  ]);
+  expect(content).toMatchObject({ run_id: "run", request_id: "one" });
+  expect(format_log_content_text(content)).toContain("run / one");
+  expect(format_log_content_text(content)).toContain(`${t("app.log.model_id")} - test-model`);
   const failure = format_log_content_text(result_log({ error: "disk failure" }));
-  expect(failure).toContain(t("app.log.usage_incomplete"));
   expect(failure).toContain(t("app.log.request_failed", { ERROR: "disk failure" }));
 });
 
-it("原生响应只投影已知文字与输出类型，媒体字节和未知字段留在成果中", () => {
+it("媒体日志只展示类型和 MIME，不包含媒体字节", () => {
   const content = result_log({
-    format: "responses",
-    result: {
-      response: {
-        status: "completed",
-        secret: "PRIVATE_FIELD",
-        output: [
-          null,
-          {
-            type: "message",
-            content: [
-              { type: "output_text", text: "answer" },
-              { type: "refusal", refusal: "refused" },
-              { type: "output_audio", data: "MEDIA_BYTES" },
-            ],
-          },
-          { type: "reasoning", summary: [{ type: "summary_text", text: "reasoning" }] },
-          { type: "image_generation_call", result: "IMAGE_BYTES" },
-        ],
-      },
-      input_tokens: 0,
-      reasoning_tokens: 0,
-      output_tokens: 0,
-      usage_complete: false,
-      cancelled: false,
-      timeout: false,
+    payload: {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "transcribe" },
+            { type: "audio", mime_type: "audio/mpeg", data: "PRIVATE_BYTES" },
+          ],
+        },
+      ],
     },
   });
-  expect(content.sections).toEqual([
-    { title: t("app.log.thinking_process"), text: "reasoning" },
-    {
-      title: t("app.log.model_response"),
-      text: "completed\n\nanswer\n\nrefused\n\noutput_audio\n\nimage_generation_call",
-    },
-  ]);
+  expect(content.sections[0]?.text).toBe("user: transcribe\n[audio: audio/mpeg]");
+  expect(JSON.stringify(content)).not.toContain("PRIVATE_BYTES");
 });

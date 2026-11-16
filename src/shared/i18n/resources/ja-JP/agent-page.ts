@@ -17,7 +17,7 @@ export const ja_jp_agent_page = {
     translation_description:
       "一括翻訳に使用するモデル。使用するタイミングはメインモデルが判断します。",
     media_description:
-      "音声・動画認識に使用するモデル。使用するタイミングはメインモデルが判断します。\n<emphasis>多くのモデルは音声・動画入力に対応していない</emphasis>点にご注意ください。doubao と gemini を推奨します。",
+      "音声・動画認識に使用するモデル。使用するタイミングはメインモデルが判断します。\n<emphasis>多くのモデルは音声・動画入力に対応していない点にご注意ください。gemini と doubao-seed-lite を推奨します。</emphasis>",
     follow: "メインモデルに従う",
   },
   title: "AGENT",
@@ -48,7 +48,7 @@ export const ja_jp_agent_page = {
     },
   },
   input: {
-    no_project_placeholder: "翻訳対象のファイルやフォルダーをドラッグしてください …",
+    no_project_placeholder: "翻訳対象のファイルやフォルダーをドラッグして、ワンクリックで翻訳 …!",
     placeholder: "タスクを入力するか、@ でスキルや指示を選択 …",
     edit_assistant_placeholder: "モデルの返信を編集 …",
     newline: "改行",
@@ -65,9 +65,9 @@ export const ja_jp_agent_page = {
     },
     groups: { files: "ファイル", skills: "スキル", instructions: "指示" },
     instructions: {
-      generate_translation: {
+      export_translation: {
         description:
-          "プロジェクト内の訳文データから訳文ファイルまたはローカライズパッチを生成します",
+          "プロジェクト内の既存の訳文を使って、文書、字幕、ゲームファイルなどの翻訳成果物をエクスポート",
       },
       update_file: {
         title: "ファイルを更新",
