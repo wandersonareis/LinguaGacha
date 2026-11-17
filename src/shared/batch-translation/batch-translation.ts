@@ -59,18 +59,26 @@ export function normalize_batch_translation_snapshot(
 /** HTTP 与 SSE 共用校验入口，并冻结恢复事实供历史快照共享。 */
 function normalize_request_recovery(raw: unknown): BatchTaskRequestRecovery | null {
   if (typeof raw !== "object" || raw === null) return null;
-  const { phase, retry_count, retry_at } = raw as Record<string, unknown>;
-  if (phase === "retrying") return Object.freeze({ phase });
+  const { phase, retry_count, retry_limit, retry_at, attempt_timeout_seconds } = raw as Record<
+    string,
+    unknown
+  >;
   if (
-    phase !== "waiting" ||
     typeof retry_count !== "number" ||
     !Number.isSafeInteger(retry_count) ||
     retry_count < 0 ||
-    typeof retry_at !== "number" ||
-    !Number.isFinite(retry_at)
+    typeof retry_limit !== "number" ||
+    !Number.isSafeInteger(retry_limit) ||
+    retry_limit <= 0
   )
     return null;
-  return Object.freeze({ phase, retry_count, retry_at });
+  if (phase === "retrying") {
+    if (typeof attempt_timeout_seconds !== "number" || attempt_timeout_seconds <= 0) return null;
+    return Object.freeze({ phase, retry_count, retry_limit, attempt_timeout_seconds });
+  }
+  if (phase !== "waiting" || typeof retry_at !== "number" || !Number.isFinite(retry_at))
+    return null;
+  return Object.freeze({ phase, retry_count, retry_limit, retry_at });
 }
 /** 独立翻译任务从活跃态自然完成后承接翻译成果导出流程。 */
 export function should_open_translation_export_followup(

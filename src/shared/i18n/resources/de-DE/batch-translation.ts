@@ -38,8 +38,9 @@ export const de_de_batch_translation = {
     retry_exhausted:
       "{count} Einträge waren auch nach mehreren Versuchen nicht erfolgreich und wurden übersprungen …",
     keys_retry_wait:
-      "API-Fehler. Automatischer Neuversuch in {seconds} Sekunden. Bisher {count} Neuversuche …",
-    keys_retry_running: "API-Fehler. Erneuter Versuch läuft …",
+      "API-Fehler. Automatischer Neuversuch in {seconds} Sekunden. Aufeinanderfolgende Antwortausfälle: {count}/{limit} …",
+    keys_retry_running:
+      "API-Fehler. Erneuter Versuch läuft (Versuchlimit {seconds} s). Aufeinanderfolgende Antwortausfälle: {count}/{limit} …",
     refresh_failed: "Fehler beim Aktualisieren der Übersetzungsaufgabe …",
     start_failed: "Fehler beim Starten der Übersetzungsaufgabe …",
     stop_failed: "Fehler beim Stoppen der Übersetzungsaufgabe …",

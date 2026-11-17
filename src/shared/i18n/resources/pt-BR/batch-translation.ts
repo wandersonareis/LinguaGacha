@@ -37,8 +37,9 @@ export const pt_br_batch_translation = {
     ended: "Tradução finalizada …",
     retry_exhausted: "{count} itens ainda falharam após repetidas tentativas e foram ignorados …",
     keys_retry_wait:
-      "Erro de API. Nova tentativa automática em {seconds} segundos. Tentativas: {count} …",
-    keys_retry_running: "Erro de API. Tentando novamente …",
+      "Erro de API. Nova tentativa automática em {seconds} segundos. Falhas sem resposta: {count}/{limit} …",
+    keys_retry_running:
+      "Erro de API. Tentando novamente (limite da tentativa: {seconds}s). Falhas sem resposta: {count}/{limit} …",
     refresh_failed: "Falha ao atualizar a tarefa de tradução …",
     start_failed: "Falha ao iniciar a tarefa de tradução …",
     stop_failed: "Falha ao interromper a tarefa de tradução …",

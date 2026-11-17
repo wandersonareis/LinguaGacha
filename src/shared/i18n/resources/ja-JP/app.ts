@@ -287,6 +287,7 @@ export const ja_jp_app = {
     request_failed: "リクエストに失敗しました：{ERROR} …",
     request_key_failed: "リクエスト失敗 - Key {KEY}：{ERROR}",
     request_timeout: "ネットワークリクエストがタイムアウトしました",
+    request_retry_exhausted: "モデルが {COUNT} 回連続で応答しなかったため、タスクを終了しました …",
     batch_translation_ended: "一括翻訳タスクが終了しました …",
     batch_request_ended: "一括リクエストタスクが終了しました …",
     api_test_key: "テスト中のキー：",

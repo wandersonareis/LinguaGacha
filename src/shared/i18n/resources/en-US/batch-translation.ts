@@ -32,8 +32,10 @@ export const en_us_batch_translation = {
     stopped: "Translation stopped …",
     ended: "Translation ended …",
     retry_exhausted: "{count} items still failed after repeated retries and were skipped …",
-    keys_retry_wait: "API error. Automatic retry in {seconds} seconds. Retried {count} times …",
-    keys_retry_running: "API error. Retrying …",
+    keys_retry_wait:
+      "API error. Automatic retry in {seconds} seconds. No-response attempts: {count}/{limit} …",
+    keys_retry_running:
+      "API error. Retrying (attempt limit {seconds}s). No-response attempts: {count}/{limit} …",
     refresh_failed: "Failed to refresh the translation task …",
     start_failed: "Failed to start the translation task …",
     stop_failed: "Failed to stop the translation task …",

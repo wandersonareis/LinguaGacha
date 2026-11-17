@@ -3,7 +3,7 @@ import { build_batch_request_result_log } from "./batch-request-log";
 import { create_text_resolver } from "../../shared/i18n";
 import { resolve_app_locale } from "../../domain/app-language";
 import type { LogManager } from "../log/log-manager";
-import { AppError } from "../../shared/error";
+import { AppError, log_error_from_message } from "../../shared/error";
 import path from "node:path";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -16,11 +16,7 @@ import {
 import { default_native_fs as fs } from "../../native/native-fs";
 import type { RuntimeLease } from "../runtime-operation-gate";
 import type { ChatGPTAuthService } from "../auth/chatgpt-auth-service";
-import {
-  LLM_REQUEST_MAX_BYTES,
-  read_model_request_snapshot,
-  read_request_timeout_ms,
-} from "../llm/llm-request";
+import { LLM_REQUEST_MAX_BYTES, read_model_request_snapshot } from "../llm/llm-request";
 import type {
   LLMClientPort,
   LLMMessage,
@@ -246,14 +242,17 @@ export class BatchRequestService {
           >({
             model,
             rate: this.rates.resolve(model),
-            timeout_ms: read_request_timeout_ms(settings),
-            dispatch: async ({ id, payload }, key, request_signal) => {
+            dispatch: async ({ id, payload }, key, request_signal, attempt) => {
+              const config_snapshot =
+                attempt.timeout_ms === null
+                  ? settings
+                  : { ...settings, request_timeout: attempt.timeout_ms / 1_000 };
               const received = await this.client.request(
                 {
                   run_id: handle.run_id,
                   work_unit_id: id,
                   model: { ...model, api_key: key },
-                  config_snapshot: settings,
+                  config_snapshot,
                   messages: payload["messages"] as unknown as LLMMessage[],
                   ...(auth_session === undefined ? {} : { auth_session }),
                 },
@@ -296,6 +295,9 @@ export class BatchRequestService {
             on_state: (state) => this.tasks.update_request_state(handle, state),
             on_failure: (key_index, error) =>
               log_batch_request_failure(this.log, BATCH_REQUEST_LOG_SOURCE, key_index, error, t),
+            timeout_error: () => log_error_from_message(t("app.log.request_timeout")),
+            retry_exhausted_message: (attempts) =>
+              t("app.log.request_retry_exhausted", { COUNT: String(attempts) }),
           });
           /** 单项正文错误单独结算，文件发布错误交给整批收尾。 */
           const run_one = async (index: number) => {

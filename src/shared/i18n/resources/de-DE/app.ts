@@ -293,6 +293,8 @@ export const de_de_app = {
     request_failed: "Anfrage fehlgeschlagen: {ERROR} …",
     request_key_failed: "Anfrage fehlgeschlagen - Key {KEY}: {ERROR}",
     request_timeout: "Zeitüberschreitung bei der Netzwerkanfrage",
+    request_retry_exhausted:
+      "Das Modell hat nach {COUNT} aufeinanderfolgenden Versuchen nicht geantwortet. Die Aufgabe wurde beendet …",
     batch_translation_ended: "Stapelübersetzung beendet …",
     batch_request_ended: "Stapelanfragen beendet …",
     api_test_key: "Teste Schlüssel:",

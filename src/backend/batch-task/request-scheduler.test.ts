@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { log_error_from_message } from "../../shared/error";
 import type { LLMClientPort, LLMRequestBody, LLMRequestResult } from "../llm/llm-types";
 import { RequestRatePool } from "./request-rate";
-import { RequestScheduler } from "./request-scheduler";
+import { RequestScheduler, type DispatchAttempt } from "./request-scheduler";
 
 // 错误文案刻意不含状态码，调度器必须消费结构化 HTTP 事实。
 const failure = () => response({ http_status: 429, request_error: log_error_from_message("限流") });
+const timeout_error = () => log_error_from_message("请求超时");
+const retry_exhausted_message = (attempts: number) => `连续无响应 ${attempts} 次`;
 
 describe("RequestScheduler", () => {
   it("不可重试错误立即拒绝排队批次并停止新派发", async () => {
@@ -44,15 +46,9 @@ describe("RequestScheduler", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    [undefined, 120, 15_000],
-    [10_000, 120, 15_000],
-    [90_000, 120, 90_000],
-    [180_000, 120, 120_000],
-    [90_000, 10, 15_000],
-  ])(
-    "429 等待 %s 毫秒、超时 %s 秒时遵循上下限",
-    async (retry_after_ms, request_timeout, expected) => {
+  it.each([undefined, 10_000, 90_000, 180_000])(
+    "429 的 Retry-After %s 毫秒不会突破 60 秒恢复周期",
+    async (retry_after_ms) => {
       const request = vi
         .fn<LLMClientPort["request"]>()
         .mockResolvedValueOnce(
@@ -63,12 +59,9 @@ describe("RequestScheduler", () => {
           }),
         )
         .mockResolvedValue(response());
-      const { scheduler } = setup(request, "A", undefined, request_timeout * 1_000);
-      const result = scheduler.request(
-        { ...body(), config_snapshot: { request_timeout } },
-        new AbortController().signal,
-      );
-      await vi.advanceTimersByTimeAsync(expected - 1);
+      const { scheduler } = setup(request);
+      const result = scheduler.request(body(), new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(59_999);
       expect(request).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(request).toHaveBeenCalledTimes(2);
@@ -79,27 +72,25 @@ describe("RequestScheduler", () => {
   it("同波 429 保留最晚服务端截止时间", async () => {
     const first = deferred();
     const second = deferred();
-    const request = vi
-      .fn<LLMClientPort["request"]>()
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockResolvedValue(response());
+    let call = 0;
+    const request = vi.fn(async () => {
+      call += 1;
+      if (call === 1) return first.promise;
+      if (call === 2) return second.promise;
+      return response();
+    });
     const { scheduler } = setup(request);
-    const results = [1, 2].map(() =>
-      scheduler.request(
-        { ...body(), config_snapshot: { request_timeout: 120 } },
-        new AbortController().signal,
-      ),
-    );
+    const results = [1, 2].map(() => scheduler.request(body(), new AbortController().signal));
     first.resolve(response({ ...failure(), retry_after_ms: 90_000, http_received_at: 0 }));
     await vi.advanceTimersByTimeAsync(60_000);
-    second.resolve(response({ ...failure(), retry_after_ms: 10_000, http_received_at: 10_000 }));
-    await vi.advanceTimersByTimeAsync(29_999);
+    second.resolve(response({ ...failure(), retry_after_ms: 10_000, http_received_at: 60_000 }));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(9_999);
     expect(request).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
-    await Promise.all(results);
     expect(request).toHaveBeenCalledTimes(4);
-    expect(Date.now()).toBe(90_000);
+    expect(Date.now()).toBe(70_000);
+    await Promise.all(results);
   });
 
   it("原生响应跨恢复保留载荷，单项错误释放探测密钥并继续后续项", async () => {
@@ -129,17 +120,18 @@ describe("RequestScheduler", () => {
     const on_attempt = vi.fn();
     const scheduler = new RequestScheduler({
       model,
-      timeout_ms: 120_000,
       rate: new RequestRatePool().resolve(model),
       dispatch,
       fail_batch: () => false,
       on_attempt,
       on_state: vi.fn(),
       on_failure: vi.fn(),
+      timeout_error,
+      retry_exhausted_message,
     });
     const signal = new AbortController().signal;
     const failed = scheduler.request({ input: "bad" }, signal);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(await failed).toMatchObject({ input_tokens: 5, retryable: false });
     const succeeded = scheduler.request({ input: "good" }, signal);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -160,7 +152,13 @@ describe("RequestScheduler", () => {
       threshold: { concurrency_limit: 1, rpm_limit: 60 },
     };
     const pool = new RequestRatePool();
-    const common = { model, timeout_ms: 120_000, on_state: vi.fn(), on_failure: vi.fn() };
+    const common = {
+      model,
+      on_state: vi.fn(),
+      on_failure: vi.fn(),
+      timeout_error,
+      retry_exhausted_message,
+    };
     const text = new RequestScheduler({
       ...common,
       rate: pool.resolve(model),
@@ -216,14 +214,14 @@ describe("RequestScheduler", () => {
       const result = scheduler.request(body(), new AbortController().signal);
       await vi.advanceTimersByTimeAsync(0);
       expect(scheduler.read_concurrency_limit()).toBe(expected);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       await result;
       expect(scheduler.read_concurrency_limit()).toBe(expected);
     },
   );
 
   it("多 Key 同波 429 只退让一次，旧成功不升档，重派请求使用新版本", async () => {
-    const attempts: ReturnType<typeof deferred>[] = [];
+    const attempts: ReturnType<typeof deferred<LLMRequestResult>>[] = [];
     const { scheduler } = setup(
       () => {
         const attempt = deferred();
@@ -273,27 +271,32 @@ describe("RequestScheduler", () => {
     const result = scheduler.request(body(), new AbortController().signal);
     await vi.advanceTimersByTimeAsync(0);
     expect(scheduler.read_concurrency_limit()).toBe(4);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(scheduler.read_concurrency_limit()).toBe(4);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await result;
     expect(scheduler.read_concurrency_limit()).toBe(5);
     await scheduler.request(body(), new AbortController().signal);
     expect(scheduler.read_concurrency_limit()).toBe(5);
   });
 
-  it("持续 429 退让至 1，冷却中取消立即结算且不再唤醒", async () => {
+  it("持续 429 按 60 秒周期退让至 1，冷却中取消立即结算且不再唤醒", async () => {
     const request = vi.fn(async () => failure());
     const { scheduler, state } = setup(request, "A", { concurrency_limit: 0, rpm_limit: 0 });
     const controller = new AbortController();
     const result = scheduler.request(body(), controller.signal).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(105_000);
+    await vi.advanceTimersByTimeAsync(180_000);
     expect(scheduler.read_concurrency_limit()).toBe(1);
     expect(request).toHaveBeenCalledTimes(4);
     expect(state).toHaveBeenLastCalledWith(
       expect.objectContaining({
         request_in_flight_count: 0,
-        request_recovery: { phase: "waiting", retry_count: 3, retry_at: 165_000 },
+        request_recovery: {
+          phase: "waiting",
+          retry_count: 0,
+          retry_limit: 10,
+          retry_at: 240_000,
+        },
       }),
     );
     controller.abort();
@@ -326,7 +329,43 @@ describe("RequestScheduler", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("按 15、30、60、60 秒恢复，超过原次数上限后仍交付响应与累计用量", async () => {
+  it("连续 10 次无响应后终止整批，任意 HTTP 响应会重置计数", async () => {
+    let calls = 0;
+    const request = vi.fn(async () => {
+      calls += 1;
+      if (calls === 10) return failure();
+      if (calls <= 19) return response({ timeout: true });
+      return response();
+    });
+    const { scheduler, failures, state } = setup(request);
+    const result = scheduler.request(body(), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(1_140_000);
+    expect(await result).toMatchObject({
+      response_result: "ok",
+    });
+    expect(calls).toBe(20);
+    expect(failures).toHaveBeenCalledTimes(19);
+    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("连续无响应达到 10 次后以终止错误结束", async () => {
+    const request = vi.fn(async () => response({ timeout: true }));
+    const { scheduler, failures } = setup(request);
+    const result = scheduler
+      .request(body(), new AbortController().signal)
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(540_000);
+    expect(await result).toMatchObject({
+      code: "model.provider_failed",
+      message: "连续无响应 10 次",
+    });
+    expect(request).toHaveBeenCalledTimes(10);
+    expect(failures).toHaveBeenCalledTimes(10);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("按 60 秒周期恢复，成功时交付响应与累计用量", async () => {
     const started_at: number[] = [];
     const request = vi.fn(async () => {
       started_at.push(Date.now());
@@ -334,16 +373,21 @@ describe("RequestScheduler", () => {
     });
     const { scheduler, state } = setup(request);
     const result = scheduler.request(body(), new AbortController().signal);
-    await vi.advanceTimersByTimeAsync(14_999);
+    await vi.advanceTimersByTimeAsync(59_999);
     expect(request).toHaveBeenCalledTimes(1);
     expect(state).toHaveBeenLastCalledWith(
       expect.objectContaining({
         request_in_flight_count: 0,
-        request_recovery: { phase: "waiting", retry_count: 0, retry_at: 15_000 },
+        request_recovery: {
+          phase: "waiting",
+          retry_count: 1,
+          retry_limit: 10,
+          retry_at: 60_000,
+        },
       }),
     );
-    for (const delay of [1, 30_000, 60_000, 60_000]) await vi.advanceTimersByTimeAsync(delay);
-    expect(started_at).toEqual([0, 15_000, 45_000, 105_000, 165_000]);
+    for (const delay of [1, 60_000, 60_000, 60_000]) await vi.advanceTimersByTimeAsync(delay);
+    expect(started_at).toEqual([0, 60_000, 120_000, 180_000, 240_000]);
     expect(await result).toMatchObject({ response_result: "ok", input_tokens: 10 });
     expect(state).toHaveBeenLastCalledWith(
       expect.objectContaining({ request_in_flight_count: 0, request_recovery: null }),
@@ -362,117 +406,110 @@ describe("RequestScheduler", () => {
       const result = scheduler.request(body(), new AbortController().signal);
       await vi.advanceTimersByTimeAsync(0);
       expect(state.mock.lastCall?.[0].request_recovery).toMatchObject({ retry_count: 0 });
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       expect(await result).toHaveProperty("response_error");
       expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     }
     expect(count).toBe(4);
   });
 
-  it("同波并发失败只计一次，收束后单请求探测，探测失败才升档", async () => {
-    const active = [deferred(), deferred(), deferred(), deferred(), deferred()];
-    let count = 0;
-    const { scheduler, state } = setup(() =>
-      count < active.length ? active[count++]!.promise : Promise.resolve(response()),
-    );
+  it("同波并发失败后按周期只派发一个探测，探测成功恢复其余请求", async () => {
+    const calls: string[] = [];
+    const probe = deferred<LLMRequestResult>();
+    const request = vi.fn(async (body: LLMRequestBody) => {
+      calls.push(body.work_unit_id);
+      if (calls.length <= 3) return failure();
+      if (calls.length === 4) return probe.promise;
+      return response();
+    });
+    const { scheduler, state } = setup(request);
     const results = [1, 2, 3].map((id) =>
       scheduler.request(body(String(id)), new AbortController().signal),
     );
-    active[0]!.resolve(failure());
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(count).toBe(3);
-    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
-    active[1]!.resolve(failure());
-    active[2]!.resolve(failure());
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(count).toBe(3);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request).toHaveBeenCalledTimes(3);
     expect(state.mock.lastCall?.[0].request_recovery).toEqual({
       phase: "waiting",
       retry_count: 0,
-      retry_at: 75_000,
+      retry_limit: 10,
+      retry_at: 60_000,
     });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(request).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(1);
-    expect(count).toBe(4);
-    expect(state.mock.lastCall?.[0].request_recovery).toEqual({ phase: "retrying" });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(count).toBe(4);
-    active[3]!.resolve(failure());
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(count).toBe(4);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(count).toBe(5);
-    active[4]!.resolve(response());
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(state.mock.lastCall?.[0].request_recovery).toEqual({
+      phase: "retrying",
+      retry_count: 0,
+      retry_limit: 10,
+      attempt_timeout_seconds: 600,
+    });
+    probe.resolve(response());
+    await vi.advanceTimersByTimeAsync(0);
     expect((await Promise.all(results)).every((result) => result.response_result === "ok")).toBe(
       true,
     );
+    expect(request).toHaveBeenCalledTimes(6);
+    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("普通请求在途时抑制并行探测提示，收束后显示重试", async () => {
-    const active = [deferred(), deferred(), deferred(), deferred()];
+  it("普通请求在途时抑制恢复提示，收束后立即进入单请求探测", async () => {
+    const active = [deferred(), deferred(), deferred()];
     const request = vi.fn<LLMClientPort["request"]>();
     for (const pending of active) request.mockReturnValueOnce(pending.promise);
     request.mockResolvedValue(response());
-    const { scheduler, state } = setup(request, "A\nB", { concurrency_limit: 3, rpm_limit: 60 });
-    const results = [1, 2, 3].map((id) =>
+    const { scheduler, state } = setup(request, "A", { concurrency_limit: 2, rpm_limit: 0 });
+    const results = [1, 2].map((id) =>
       scheduler.request(body(String(id)), new AbortController().signal),
     );
-    await vi.advanceTimersByTimeAsync(2_000);
     active[0]!.resolve(failure());
-    active[1]!.resolve(failure());
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(request).toHaveBeenCalledTimes(4);
-    expect(request.mock.lastCall?.[0].model).toMatchObject({ api_key: "B" });
-    expect(state.mock.lastCall?.[0]).toEqual({
-      request_concurrency_limit: 3,
-      request_in_flight_count: 2,
-      request_recovery: null,
-    });
-    active[2]!.resolve(failure());
     await vi.advanceTimersByTimeAsync(0);
-    expect(state.mock.lastCall?.[0].request_recovery).toEqual({ phase: "retrying" });
-    active[3]!.resolve(response());
-    await vi.advanceTimersByTimeAsync(30_000);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(request).toHaveBeenCalledTimes(2);
+    active[1]!.resolve(failure());
+    await vi.advanceTimersByTimeAsync(1);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(state.mock.lastCall?.[0].request_recovery).toEqual({
+      phase: "retrying",
+      retry_count: 0,
+      retry_limit: 10,
+      attempt_timeout_seconds: 600,
+    });
+    active[2]!.resolve(response());
+    await vi.advanceTimersByTimeAsync(0);
     await Promise.all(results);
     expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("多密钥共用连续不可用计数，最早派发时间包含 RPM，探测中取消保留信号", async () => {
-    const probe = deferred();
-    let calls = 0;
+  it("恢复派发携带 600 秒总时限，探测中取消保留信号", async () => {
+    const probe = deferred<LLMRequestResult>();
+    const attempts: (DispatchAttempt | undefined)[] = [];
     let probe_signal: AbortSignal | undefined;
-    const { scheduler, state } = setup(
-      async (_body, signal) => {
-        calls += 1;
-        if (calls === 4) {
-          probe_signal = signal;
-          return probe.promise;
-        }
-        return failure();
+    const model = { api_key: "A", threshold: { concurrency_limit: 1, rpm_limit: 0 } };
+    const state = vi.fn<(state: BatchTaskRequestState) => void>();
+    const scheduler = new RequestScheduler<LLMRequestBody, LLMRequestResult>({
+      model,
+      rate: new RequestRatePool().resolve(model),
+      dispatch: (_body, _key, signal, attempt) => {
+        attempts.push(attempt);
+        if (attempts.length === 1) return Promise.resolve(failure());
+        probe_signal = signal;
+        return probe.promise;
       },
-      "A\nB",
-      { concurrency_limit: 2, rpm_limit: 1 },
-    );
+      on_state: state,
+      on_failure: vi.fn(),
+      timeout_error,
+      retry_exhausted_message,
+    });
     const controller = new AbortController();
     const result = scheduler.request(body(), controller.signal);
-    await vi.advanceTimersByTimeAsync(0);
-    // B 仍健康，只有速率等待，不能显示密钥警告。
-    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(state.mock.lastCall?.[0].request_recovery).toEqual({
-      phase: "waiting",
-      retry_count: 0,
-      retry_at: 120_000,
-    });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(state.mock.lastCall?.[0].request_recovery).toEqual({
-      phase: "waiting",
-      retry_count: 1,
-      retry_at: 180_000,
-    });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(state.mock.lastCall?.[0].request_recovery).toEqual({ phase: "retrying" });
+    expect(attempts).toEqual([{ timeout_ms: null }, { timeout_ms: 600_000 }]);
+    expect(state.mock.lastCall?.[0].request_recovery).toMatchObject({ phase: "retrying" });
     controller.abort();
     expect(probe_signal?.aborted).toBe(true);
     probe.resolve(response({ cancelled: true }));
@@ -583,7 +620,6 @@ function setup(
   request: LLMClientPort["request"],
   keys = "A",
   threshold = { concurrency_limit: 8, rpm_limit: 0 },
-  timeout_ms = 120_000,
 ) {
   const state = vi.fn<(state: BatchTaskRequestState) => void>();
   const failures = vi.fn();
@@ -591,14 +627,15 @@ function setup(
   return {
     state,
     failures,
-    scheduler: new RequestScheduler({
+    scheduler: new RequestScheduler<LLMRequestBody, LLMRequestResult>({
       model,
-      timeout_ms,
-      dispatch: (body: LLMRequestBody, key, signal) =>
+      dispatch: (body, key, signal) =>
         request({ ...body, model: { ...model, api_key: key } }, signal),
       rate: new RequestRatePool().resolve(model),
       on_state: state,
       on_failure: failures,
+      timeout_error,
+      retry_exhausted_message,
     }),
   };
 }
@@ -630,9 +667,9 @@ function body(id = "unit"): LLMRequestBody {
 }
 
 /** 由测试决定在途请求完成顺序，覆盖并发恢复。 */
-function deferred() {
-  let resolve!: (result: LLMRequestResult) => void;
-  const promise = new Promise<LLMRequestResult>((done) => {
+function deferred<Result = LLMRequestResult>() {
+  let resolve!: (result: Result) => void;
+  const promise = new Promise<Result>((done) => {
     resolve = done;
   });
   return { promise, resolve };

@@ -22,7 +22,10 @@ const BATCH_LLM_REQUEST_SCHEMA = Type.Object(
   {
     model_usage: Type.Union(
       BATCH_LLM_REQUEST_MODEL_USAGES.map((usage) => Type.Literal(usage)),
-      { description: "模型用途：`agent` 当前主控模型、`media` 音视频子模型" },
+      {
+        description:
+          "只接受 `agent`（当前主控模型）或 `media`（音视频子模型）。翻译工程 `items` 请用 `batch_item_translation`，不要传 `translation` 或 `batch_translation`",
+      },
     ),
     thinking_downgrade: Type.Optional(
       Type.Boolean({
@@ -52,6 +55,8 @@ export function create_agent_batch_llm_request_tool(
       "### 何时使用",
       "",
       "- 只在适用技能或用户明确要求使用 `batch_llm_request` 时调用。",
+      "- 本工具不翻译工程内的 `items`。翻译 `items` 用 `batch_item_translation`，不要用本工具。",
+      "- `model_usage` 只接受 `agent` 或 `media`，不要传 `translation` 或 `batch_translation`。",
       "- 其余工作按 `CodeAct 范式` 和适用技能，通过 `workspace_run` 脚本配合当前对话完成。",
       "- 独立请求不含当前对话历史、已加载技能、工程知识与工作区工具，全部上下文来自输入文件中的 `messages`。",
       "",

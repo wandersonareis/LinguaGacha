@@ -30,8 +30,9 @@ export const zh_cn_batch_translation = {
     stopped: "翻译已停止 …",
     ended: "翻译已结束 …",
     retry_exhausted: "{count} 个条目多次重试后仍未成功，已跳过 …",
-    keys_retry_wait: "接口报错，{seconds} 秒后将自动重试，已重试 {count} 次 …",
-    keys_retry_running: "接口报错，正在重试 …",
+    keys_retry_wait: "接口报错，{seconds} 秒后将自动重试，连续无响应 {count}/{limit} 次 …",
+    keys_retry_running:
+      "接口报错，正在重试（单次上限 {seconds} 秒），连续无响应 {count}/{limit} 次 …",
     refresh_failed: "翻译任务状态刷新失败 …",
     start_failed: "启动翻译任务失败 …",
     stop_failed: "停止翻译任务失败 …",

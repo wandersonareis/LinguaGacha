@@ -54,7 +54,7 @@ it("恢复提示更新倒计时和次数，恢复与停止解除通知", async (
     await update({
       source: "standalone",
       status: "running",
-      request_recovery: { phase: "waiting", retry_count: 0, retry_at: 15_000 },
+      request_recovery: { phase: "waiting", retry_count: 0, retry_limit: 10, retry_at: 15_000 },
     });
     const options = vi.mocked(toast.warning).mock.lastCall?.[1];
     expect(options).toMatchObject({
@@ -65,25 +65,42 @@ it("恢复提示更新倒计时和次数，恢复与停止解除通知", async (
     });
     expect(t).toHaveBeenLastCalledWith("batch_translation.feedback.keys_retry_wait", {
       count: "0",
+      limit: "10",
       seconds: "15",
     });
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
     expect(t).toHaveBeenLastCalledWith("batch_translation.feedback.keys_retry_wait", {
       count: "0",
+      limit: "10",
       seconds: "14",
     });
     await act(async () => vi.advanceTimersByTimeAsync(14_000));
     expect(t).toHaveBeenLastCalledWith("batch_translation.feedback.keys_retry_wait", {
       count: "0",
+      limit: "10",
       seconds: "0",
     });
-    await update({ source: "agent", request_recovery: { phase: "retrying" } });
-    expect(t).toHaveBeenLastCalledWith("batch_translation.feedback.keys_retry_running");
+    await update({
+      source: "agent",
+      request_recovery: {
+        phase: "retrying",
+        retry_count: 2,
+        retry_limit: 10,
+        attempt_timeout_seconds: 60,
+      },
+    });
+    expect(t).toHaveBeenLastCalledWith("batch_translation.feedback.keys_retry_running", {
+      count: "2",
+      limit: "10",
+      seconds: "60",
+    });
     expect(toast.warning).toHaveBeenLastCalledWith(expect.any(String), options);
     expect(vi.getTimerCount()).toBe(0);
     await update({ request_recovery: null });
     expect(toast.dismiss).toHaveBeenLastCalledWith(options?.id);
-    await update({ request_recovery: { phase: "waiting", retry_count: 0, retry_at: 30_000 } });
+    await update({
+      request_recovery: { phase: "waiting", retry_count: 0, retry_limit: 10, retry_at: 30_000 },
+    });
     await update({ status: "stopping" });
     expect(toast.dismiss).toHaveBeenLastCalledWith(options?.id);
     vi.mocked(toast.warning).mockClear();

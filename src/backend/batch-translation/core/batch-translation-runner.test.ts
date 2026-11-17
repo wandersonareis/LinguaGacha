@@ -16,6 +16,8 @@ import {
   read_project_language_settings,
 } from "../../../domain/project-settings";
 import { read_text_quality_snapshot } from "../../../shared/text/text-processing";
+import { read_json_record } from "../../../domain/json";
+import type { LLMRequestBody } from "../../llm/llm-types";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -665,7 +667,9 @@ describe("BatchTranslationRunner", () => {
         started = resolve;
       });
       let recovered = false;
-      const request = vi.fn(async () => {
+      const request_timeouts: unknown[] = [];
+      const request = vi.fn(async (body: LLMRequestBody) => {
+        request_timeouts.push(read_json_record(body.config_snapshot)["request_timeout"]);
         started();
         return {
           response_result: recovered ? '{"id":0,"text":"译文"}' : "",
@@ -706,17 +710,22 @@ describe("BatchTranslationRunner", () => {
         await runtime.execute(handle, () => runner.run(handle, command, context));
         await first_request;
         await vi.advanceTimersByTimeAsync(100_000);
-        expect(request).toHaveBeenCalledTimes(6);
+        expect(request).toHaveBeenCalledTimes(4);
+        expect(request_timeouts.slice(1).every((timeout) => timeout === 60)).toBe(true);
         expect(committed).toEqual([]);
         expect(items).toEqual(original);
         expect((await runtime.build_snapshot()).run_progress).toMatchObject({
           total_line: 4,
           failed_line: 0,
         });
-        expect((await runtime.build_snapshot()).request_recovery).toMatchObject({ retry_count: 4 });
+        expect((await runtime.build_snapshot()).request_recovery).toMatchObject({
+          phase: "waiting",
+          retry_count: expect.any(Number),
+          retry_limit: 10,
+        });
         if (action === "recover") {
           recovered = true;
-          await vi.advanceTimersByTimeAsync(10_000);
+          await vi.advanceTimersByTimeAsync(120_000);
         } else {
           await tasks.request_stop(handle.run_id);
         }
@@ -733,7 +742,7 @@ describe("BatchTranslationRunner", () => {
           ]);
           expect((await runtime.build_snapshot()).run_progress).toMatchObject({
             failed_line: 0,
-            total_input_tokens: 9,
+            total_input_tokens: 7,
           });
           expect(execute).toHaveBeenCalledTimes(3);
         } else {

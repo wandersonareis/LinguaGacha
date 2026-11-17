@@ -282,6 +282,8 @@ export const en_us_app = {
     request_failed: "Request failed: {ERROR} …",
     request_key_failed: "Request failed - Key {KEY}: {ERROR}",
     request_timeout: "Network request timed out",
+    request_retry_exhausted:
+      "The model did not respond after {COUNT} consecutive attempts. The task has ended …",
     batch_translation_ended: "Batch translation task ended …",
     batch_request_ended: "Batch request task ended …",
     api_test_key: "Testing key:",

@@ -279,6 +279,7 @@ export const ko_kr_app = {
     request_failed: "요청 실패: {ERROR} …",
     request_key_failed: "요청 실패 - Key {KEY}: {ERROR}",
     request_timeout: "네트워크 요청 시간 초과",
+    request_retry_exhausted: "모델이 {COUNT}회 연속 응답하지 않아 작업을 종료했습니다 …",
     batch_translation_ended: "일괄 번역 작업이 종료되었습니다 …",
     batch_request_ended: "일괄 요청 작업이 종료되었습니다 …",
     api_test_key: "테스트 중인 키:",

@@ -2,10 +2,16 @@
 export type BatchTaskRequestRecovery =
   | Readonly<{
       phase: "waiting";
-      retry_count: number; // 连续全部不可用期间实际派发的恢复请求数，任一密钥恢复正常后清零。
+      retry_count: number; // 当前逻辑请求中连续没有 HTTP 响应的最高次数。
+      retry_limit: number; // 达到该次数后任务结束。
       retry_at: number; // 毫秒时间戳，同时考虑密钥冷却和请求速率。
     }>
-  | Readonly<{ phase: "retrying" }>; // 恢复请求在途。
+  | Readonly<{
+      phase: "retrying";
+      retry_count: number; // 正在进行的恢复请求已有的连续无响应次数。
+      retry_limit: number;
+      attempt_timeout_seconds: number; // 恢复请求的总时限，与首次请求的完整生成时限分离。
+    }>; // 恢复请求在途。
 
 export type BatchTaskRequestState = Readonly<{
   request_in_flight_count: number;

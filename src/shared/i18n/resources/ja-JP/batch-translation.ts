@@ -32,8 +32,10 @@ export const ja_jp_batch_translation = {
     stopped: "翻訳を停止しました …",
     ended: "翻訳が終了しました …",
     retry_exhausted: "{count} 件の項目は再試行を繰り返しても成功しなかったため、スキップしました …",
-    keys_retry_wait: "API エラー。{seconds} 秒後に自動で再試行します。再試行済み {count} 回 …",
-    keys_retry_running: "API エラー。再試行中 …",
+    keys_retry_wait:
+      "API エラー。{seconds} 秒後に自動で再試行します。連続無応答 {count}/{limit} 回 …",
+    keys_retry_running:
+      "API エラー。再試行中（1回の上限 {seconds} 秒）。連続無応答 {count}/{limit} 回 …",
     refresh_failed: "翻訳タスクの状態を更新できませんでした …",
     start_failed: "翻訳タスクを開始できませんでした …",
     stop_failed: "翻訳タスクを停止できませんでした …",

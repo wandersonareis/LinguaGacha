@@ -22,11 +22,16 @@ export function BatchTaskRecoveryToast(): null {
         recovery.phase === "waiting"
           ? t("batch_translation.feedback.keys_retry_wait", {
               count: String(recovery.retry_count),
+              limit: String(recovery.retry_limit),
               seconds: String(
                 Math.max(0, Math.ceil((recovery.retry_at - Date.now()) / COUNTDOWN_INTERVAL_MS)),
               ),
             })
-          : t("batch_translation.feedback.keys_retry_running");
+          : t("batch_translation.feedback.keys_retry_running", {
+              count: String(recovery.retry_count),
+              limit: String(recovery.retry_limit),
+              seconds: String(recovery.attempt_timeout_seconds),
+            });
       push_toast("warning", message, {
         id: RECOVERY_TOAST_ID,
         dismissible: false,

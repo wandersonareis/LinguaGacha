@@ -9,7 +9,10 @@ import {
 
 describe("批量翻译展示", () => {
   it.each([
-    [{ phase: "retrying" }, { phase: "retrying" }],
+    [
+      { phase: "retrying", retry_count: 2, retry_limit: 10, attempt_timeout_seconds: 60 },
+      { phase: "retrying", retry_count: 2, retry_limit: 10, attempt_timeout_seconds: 60 },
+    ],
     [{ retry_count: 0, retry_at: 123_000 }, null],
     [{ phase: "waiting", retry_count: 0, retry_at: null }, null],
   ])("恢复结构按阶段校验：%j", (request_recovery, expected) => {
@@ -24,7 +27,12 @@ describe("批量翻译展示", () => {
     ).toEqual(expected);
   });
   it("恢复信息归一后供历史快照共享，停止时清空", () => {
-    const recovery = { phase: "waiting" as const, retry_count: 4, retry_at: 123_000 };
+    const recovery = {
+      phase: "waiting" as const,
+      retry_count: 4,
+      retry_limit: 10,
+      retry_at: 123_000,
+    };
     const snapshot = normalize_batch_translation_snapshot({
       batch_translation: { status: "running", request_recovery: recovery },
     });
@@ -32,6 +40,7 @@ describe("批量翻译展示", () => {
     expect(structuredClone(snapshot).request_recovery).toEqual({
       phase: "waiting",
       retry_count: 4,
+      retry_limit: 10,
       retry_at: 123_000,
     });
     expect(

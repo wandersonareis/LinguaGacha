@@ -1,8 +1,8 @@
-import { read_request_timeout_ms } from "../../llm/llm-request";
 import type { LLMRequestBody, LLMRequestResult, LLMClientPort } from "../../llm/llm-types";
 import type { ChatGPTAuthService } from "../../auth/chatgpt-auth-service";
 import type { LogManager } from "../../log/log-manager";
 import type { ProjectExecutionSettings } from "../../../domain/project-settings";
+import type { JsonRecord } from "../../../domain/json";
 import type {
   TranslationModelSnapshot,
   WorkUnitExecutor,
@@ -12,7 +12,7 @@ import type { BatchTranslationState } from "../batch-translation-state";
 import type { BatchTranslationProjectStore } from "../batch-translation-project-store";
 import type { TranslationPlanner } from "../planning/translation-planner";
 import type { TextQualitySnapshot, TextTaskItemRecord } from "../../../shared/text/text-processing";
-import { AppError } from "../../../shared/error";
+import { AppError, log_error_from_message } from "../../../shared/error";
 import { prepare_translation_targets } from "../planning/translation-targets";
 
 import type { BatchTranslationRunHandle } from "../batch-translation-state";
@@ -161,20 +161,31 @@ export class BatchTranslationRunner {
       const rate = this.rate_pool.resolve(run_context.model);
       const request_scheduler = new RequestScheduler({
         model: run_context.model,
-        timeout_ms: read_request_timeout_ms(run_context.config_snapshot),
-        dispatch: (body: LLMRequestBody, key, signal) =>
-          this.llm_client.request(
+        dispatch: (body: LLMRequestBody, key, signal, attempt) => {
+          const config_snapshot =
+            attempt.timeout_ms === null
+              ? body.config_snapshot
+              : {
+                  ...(body.config_snapshot as JsonRecord),
+                  request_timeout: attempt.timeout_ms / 1_000,
+                };
+          return this.llm_client.request(
             {
               ...body,
+              config_snapshot,
               ...(auth_session === undefined ? {} : { auth_session }),
               model: { ...run_context.model, api_key: key },
             },
             signal,
-          ),
+          );
+        },
         rate,
         on_state: (state) => this.task_runtime.update_request_state(handle, state),
         on_failure: (key_index, error) =>
           log_batch_request_failure(this.log_manager, "engine", key_index, error, t),
+        timeout_error: () => log_error_from_message(t("app.log.request_timeout")),
+        retry_exhausted_message: (attempts) =>
+          t("app.log.request_retry_exhausted", { COUNT: String(attempts) }),
       });
       const pipeline = new TranslationPipeline({
         read_concurrency_limit: () => request_scheduler.read_concurrency_limit(),

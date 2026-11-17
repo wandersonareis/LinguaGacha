@@ -32,8 +32,10 @@ export const ko_kr_batch_translation = {
     stopped: "번역이 중지되었습니다 …",
     ended: "번역이 종료되었습니다 …",
     retry_exhausted: "{count}개 항목은 여러 번 재시도해도 성공하지 못해 건너뛰었습니다 …",
-    keys_retry_wait: "API 오류. {seconds}초 후 자동으로 재시도합니다. 지금까지 {count}회 재시도 …",
-    keys_retry_running: "API 오류. 재시도 중 …",
+    keys_retry_wait:
+      "API 오류. {seconds}초 후 자동으로 재시도합니다. 연속 무응답 {count}/{limit}회 …",
+    keys_retry_running:
+      "API 오류. 재시도 중 (시도 제한 {seconds}초). 연속 무응답 {count}/{limit}회 …",
     refresh_failed: "번역 작업 상태를 새로 고치지 못했습니다 …",
     start_failed: "번역 작업을 시작하지 못했습니다 …",
     stop_failed: "번역 작업을 중지하지 못했습니다 …",
