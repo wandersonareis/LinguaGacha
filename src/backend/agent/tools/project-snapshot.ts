@@ -35,7 +35,7 @@ export function create_agent_project_snapshot_tool(options: {
       "",
       "### 操作",
       "",
-      "- `list`：列出当前工程的快照（时间、原因、大小、应用版本、`anchor`/`protect`）。恢复前必须先调用。",
+      "- `list`：列出当前工程的快照（时间、原因、大小、应用版本、`anchor`/`protect`）。`workspace_run` 返回的 `restore_point` 不在此列表，按返回的文件名直接 `restore`。恢复前必须先调用。",
       "- `create`：立即保存一个手动快照，适合在执行高风险批量修改前使用。",
       "- `rollback`：恢复最近一个非安全快照的 `translations`，适合一次 apply/批量写入出错。",
       "- `restore_anchor`：恢复当前任务锚点（多次修正都失败后的整体回退）。",

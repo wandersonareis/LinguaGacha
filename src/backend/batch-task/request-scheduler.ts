@@ -12,18 +12,10 @@ import {
   type RequestRate,
 } from "./request-rate";
 
-/** 恢复请求的完整节奏：首包等待和下一次派发都以这个周期为准。 */
-export const RETRY_CYCLE_MS = 60_000;
-/** 恢复派发的单次尝试总时限：模型生成耗时较长时不能被恢复周期截断。 */
-export const RETRY_ATTEMPT_TIMEOUT_MS = 600_000;
 /** 连续没有 HTTP 响应的请求达到该次数后结束任务，任一响应会清零。 */
 export const RETRY_LIMIT = 10;
+const RETRY_CYCLE_MS = 60_000; // 密钥冷却周期，与单次请求时限无关。
 const HTTP_TOO_MANY_REQUESTS = 429;
-
-/** 一次物理派发携带的恢复事实，首次派发不覆盖任务自身的生成时限。 */
-export interface DispatchAttempt {
-  timeout_ms: number | null;
-}
 
 interface RequestKey {
   value: string;
@@ -52,12 +44,8 @@ interface PendingRequest<Input, Result extends LLMRequestFacts> {
 
 interface SchedulerOptions<Input, Result extends LLMRequestFacts> {
   model: JsonValue;
-  dispatch: (
-    input: Input,
-    key: string,
-    signal: AbortSignal,
-    attempt: DispatchAttempt,
-  ) => Promise<Result>;
+  timeout_ms: number; // 使用调用方配置的请求时限；每轮派发不再覆盖生成时限。
+  dispatch: (input: Input, key: string, signal: AbortSignal) => Promise<Result>;
   fail_batch?: (result: Result) => boolean; // 不可恢复的单项错误可交还业务层，缺省保持整批终止。
   on_attempt?: (result: Result) => void; // 每次物理回执只结算一次，包含重试和终止前的已知用量。
   rate: RequestRate;
@@ -188,9 +176,7 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
       this.in_flight += 1;
       this.active.add(pending);
       this.options.rate.consume_dispatch_permit(now);
-      void this.execute(pending, key, key_index, {
-        timeout_ms: pending.retrying ? RETRY_ATTEMPT_TIMEOUT_MS : null,
-      });
+      void this.execute(pending, key, key_index);
     }
   }
 
@@ -218,7 +204,7 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
         phase: "retrying",
         retry_count,
         retry_limit: RETRY_LIMIT,
-        attempt_timeout_seconds: RETRY_ATTEMPT_TIMEOUT_MS / 1_000,
+        attempt_timeout_seconds: this.options.timeout_ms / 1_000,
       });
     if (this.queue.length === 0) return null; // 全部密钥冷却且没有待派发请求。
     const now = Date.now();
@@ -254,12 +240,11 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
     pending: PendingRequest<Input, Result>,
     key: RequestKey,
     key_index: number,
-    attempt: DispatchAttempt,
   ): Promise<void> {
     const version = this.concurrency_version; // 每次真实尝试独立取版本，换密钥重试也重新取值。
     let outcome: { result: Result } | { error: unknown } | null = null; // null 表示等待重新派发。
     try {
-      const result = await this.options.dispatch(pending.body, key.value, pending.signal, attempt);
+      const result = await this.options.dispatch(pending.body, key.value, pending.signal);
       this.options.on_attempt?.(result);
       pending.usage.usage_complete &&= result.usage_complete === true;
       for (const field of ["input_tokens", "reasoning_tokens", "output_tokens"] as const)
@@ -302,7 +287,7 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
         }
         if (result.http_status === HTTP_TOO_MANY_REQUESTS) {
           this.adjust_concurrency(version, false);
-          const delay = Math.min(result.retry_after_ms ?? 0, RETRY_CYCLE_MS);
+          const delay = Math.min(result.retry_after_ms ?? 0, this.options.timeout_ms);
           key.available_at = Math.max(
             key.available_at,
             (result.http_received_at ?? Date.now()) + delay,

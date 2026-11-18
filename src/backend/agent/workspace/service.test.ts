@@ -188,6 +188,7 @@ describe("AgentWorkspaceService", () => {
       "before-agent-apply",
       { task: "agent", protect: true },
     );
+    expect(fixture.snapshots.discard_run_points).toHaveBeenCalledWith(fixture.snapshot.projectPath);
   });
 
   it("绝对输入路径原样交给导入记录，工作目录输入不记录", async () => {
@@ -1749,6 +1750,7 @@ async function create_fixture(temp_dir: string, native_fs?: NativeFs) {
   );
   const snapshots = {
     create: vi.fn(async () => null),
+    discard_run_points: vi.fn(),
     describe: vi.fn(async () => ({
       directory: "",
       limit: 0,

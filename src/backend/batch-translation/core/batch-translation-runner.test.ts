@@ -711,7 +711,7 @@ describe("BatchTranslationRunner", () => {
         await first_request;
         await vi.advanceTimersByTimeAsync(100_000);
         expect(request).toHaveBeenCalledTimes(4);
-        expect(request_timeouts.slice(1).every((timeout) => timeout === 60)).toBe(true);
+        expect(request_timeouts.every((timeout) => timeout === request_timeouts[0])).toBe(true);
         expect(committed).toEqual([]);
         expect(items).toEqual(original);
         expect((await runtime.build_snapshot()).run_progress).toMatchObject({

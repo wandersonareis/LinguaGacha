@@ -1,8 +1,8 @@
 import type { LLMRequestBody, LLMRequestResult, LLMClientPort } from "../../llm/llm-types";
+import { read_request_timeout_ms } from "../../llm/llm-request";
 import type { ChatGPTAuthService } from "../../auth/chatgpt-auth-service";
 import type { LogManager } from "../../log/log-manager";
 import type { ProjectExecutionSettings } from "../../../domain/project-settings";
-import type { JsonRecord } from "../../../domain/json";
 import type {
   TranslationModelSnapshot,
   WorkUnitExecutor,
@@ -161,24 +161,16 @@ export class BatchTranslationRunner {
       const rate = this.rate_pool.resolve(run_context.model);
       const request_scheduler = new RequestScheduler({
         model: run_context.model,
-        dispatch: (body: LLMRequestBody, key, signal, attempt) => {
-          const config_snapshot =
-            attempt.timeout_ms === null
-              ? body.config_snapshot
-              : {
-                  ...(body.config_snapshot as JsonRecord),
-                  request_timeout: attempt.timeout_ms / 1_000,
-                };
-          return this.llm_client.request(
+        timeout_ms: read_request_timeout_ms(run_context.config_snapshot),
+        dispatch: (body: LLMRequestBody, key, signal) =>
+          this.llm_client.request(
             {
               ...body,
-              config_snapshot,
               ...(auth_session === undefined ? {} : { auth_session }),
               model: { ...run_context.model, api_key: key },
             },
             signal,
-          );
-        },
+          ),
         rate,
         on_state: (state) => this.task_runtime.update_request_state(handle, state),
         on_failure: (key_index, error) =>

@@ -239,7 +239,7 @@ export class AgentWorkspaceService {
       };
       files: Pick<ProjectContentService, "inspect_sources" | "apply_file_changes">;
       writeStore: Pick<ProjectWriteStore, "apply_agent_workspace_changes">;
-      snapshots?: Pick<ProjectSnapshotService, "create" | "describe">;
+      snapshots?: Pick<ProjectSnapshotService, "create" | "describe" | "discard_run_points">;
       logManager: Pick<LogManager, "warning">;
       run: AgentWorkspaceRunPort;
       packageSources: Pick<AgentPackageSources, "resolve" | "forget">; // 应用级缓存，按对话身份隔离
@@ -977,6 +977,8 @@ export class AgentWorkspaceService {
             task: task_token,
             protect: true,
           });
+          // apply 检查点已覆盖写入前状态，脚本前恢复点不再需要。
+          this.options.snapshots?.discard_run_points(active.projectPath);
           return await this.options.writeStore.apply_agent_workspace_changes({
             projectPath: active.projectPath,
             source: "agent_workspace_apply",
@@ -1068,6 +1070,8 @@ export class AgentWorkspaceService {
           task: task_token,
           protect: true,
         });
+        // apply 检查点已覆盖写入前状态，脚本前恢复点不再需要。
+        this.options.snapshots?.discard_run_points(active.projectPath);
         return await this.options.files.apply_file_changes({
           projectPath: active.projectPath,
           source: "agent_workspace_apply",

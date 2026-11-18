@@ -107,7 +107,10 @@ type AgentServiceOptions = {
   sessionState: ProjectSessionState;
   runtimeGate: RuntimeOperationGate;
   workspace: AgentWorkspacePort;
-  snapshots?: Pick<ProjectSnapshotService, "describe" | "create_for_run" | "create">;
+  snapshots?: Pick<
+    ProjectSnapshotService,
+    "describe" | "create_for_run" | "create" | "discard_run_points"
+  >;
   restoreSnapshot?: (
     file: string,
     scope: AgentRestoreScope,
@@ -845,6 +848,14 @@ export class AgentService {
     execution: AgentExecution,
     errors: unknown[],
   ): Promise<void> {
+    const run_point = execution.runPoint;
+    if (run_point !== null && !run_point.externalWrite) {
+      try {
+        this.snapshots?.discard_run_points(run_point.projectPath, run_point.task);
+      } catch {
+        // 恢复点清理失败不影响会话收尾；该点不进入快照列表与数量限制，最多留一个隐藏文件。
+      }
+    }
     try {
       await execution.acceptance?.catch(() => undefined); // 受理错误由原命令负责报告。
       try {
@@ -1122,10 +1133,11 @@ export class AgentService {
           try {
             const project_path = this.session_state.require_loaded_project_path();
             const before = await this.database.read_project_state(project_path);
-            // 每个脚本前保存 full 预脚本点；同内容会去重，脚本可写 .lg 时这是最细恢复点。
+            const task = execution.roundId ?? execution.lease.owner;
+            // 脚本前恢复点独立于数量限制；同任务复用首个文件，脚本直接写 .lg 时作为最细恢复点。
             const snapshot = await this.snapshots?.create_for_run(
               project_path,
-              execution.roundId ?? execution.lease.owner,
+              task,
               "before-workspace-run",
             );
             const result = await this.workspace.run(
@@ -1156,9 +1168,18 @@ export class AgentService {
               signal,
             );
             const after = await this.database.read_project_state(project_path);
+            const external_project_write = before.project_hash !== after.project_hash;
+            if (snapshot !== null && snapshot !== undefined) {
+              execution.runPoint = {
+                projectPath: project_path,
+                task,
+                externalWrite:
+                  (execution.runPoint?.externalWrite ?? false) || external_project_write,
+              };
+            }
             return {
               ...result,
-              external_project_write: before.project_hash !== after.project_hash,
+              external_project_write,
               restore_point: snapshot?.file ?? null,
             };
           } finally {

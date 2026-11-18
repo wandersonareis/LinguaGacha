@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { log_error_from_message } from "../../shared/error";
 import type { LLMClientPort, LLMRequestBody, LLMRequestResult } from "../llm/llm-types";
 import { RequestRatePool } from "./request-rate";
-import { RequestScheduler, type DispatchAttempt } from "./request-scheduler";
+import { RequestScheduler } from "./request-scheduler";
 
 // 错误文案刻意不含状态码，调度器必须消费结构化 HTTP 事实。
 const failure = () => response({ http_status: 429, request_error: log_error_from_message("限流") });
@@ -120,6 +120,7 @@ describe("RequestScheduler", () => {
     const on_attempt = vi.fn();
     const scheduler = new RequestScheduler({
       model,
+      timeout_ms: 60_000,
       rate: new RequestRatePool().resolve(model),
       dispatch,
       fail_batch: () => false,
@@ -154,6 +155,7 @@ describe("RequestScheduler", () => {
     const pool = new RequestRatePool();
     const common = {
       model,
+      timeout_ms: 60_000,
       on_state: vi.fn(),
       on_failure: vi.fn(),
       timeout_error,
@@ -442,7 +444,7 @@ describe("RequestScheduler", () => {
       phase: "retrying",
       retry_count: 0,
       retry_limit: 10,
-      attempt_timeout_seconds: 600,
+      attempt_timeout_seconds: 60,
     });
     probe.resolve(response());
     await vi.advanceTimersByTimeAsync(0);
@@ -476,44 +478,11 @@ describe("RequestScheduler", () => {
       phase: "retrying",
       retry_count: 0,
       retry_limit: 10,
-      attempt_timeout_seconds: 600,
+      attempt_timeout_seconds: 60,
     });
     active[2]!.resolve(response());
     await vi.advanceTimersByTimeAsync(0);
     await Promise.all(results);
-    expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("恢复派发携带 600 秒总时限，探测中取消保留信号", async () => {
-    const probe = deferred<LLMRequestResult>();
-    const attempts: (DispatchAttempt | undefined)[] = [];
-    let probe_signal: AbortSignal | undefined;
-    const model = { api_key: "A", threshold: { concurrency_limit: 1, rpm_limit: 0 } };
-    const state = vi.fn<(state: BatchTaskRequestState) => void>();
-    const scheduler = new RequestScheduler<LLMRequestBody, LLMRequestResult>({
-      model,
-      rate: new RequestRatePool().resolve(model),
-      dispatch: (_body, _key, signal, attempt) => {
-        attempts.push(attempt);
-        if (attempts.length === 1) return Promise.resolve(failure());
-        probe_signal = signal;
-        return probe.promise;
-      },
-      on_state: state,
-      on_failure: vi.fn(),
-      timeout_error,
-      retry_exhausted_message,
-    });
-    const controller = new AbortController();
-    const result = scheduler.request(body(), controller.signal);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(attempts).toEqual([{ timeout_ms: null }, { timeout_ms: 600_000 }]);
-    expect(state.mock.lastCall?.[0].request_recovery).toMatchObject({ phase: "retrying" });
-    controller.abort();
-    expect(probe_signal?.aborted).toBe(true);
-    probe.resolve(response({ cancelled: true }));
-    expect(await result).toMatchObject({ cancelled: true });
     expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -629,6 +598,7 @@ function setup(
     failures,
     scheduler: new RequestScheduler<LLMRequestBody, LLMRequestResult>({
       model,
+      timeout_ms: 60_000,
       dispatch: (body, key, signal) =>
         request({ ...body, model: { ...model, api_key: key } }, signal),
       rate: new RequestRatePool().resolve(model),

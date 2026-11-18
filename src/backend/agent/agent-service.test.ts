@@ -2010,6 +2010,68 @@ describe("AgentService", () => {
     }
   });
 
+  function create_run_point_snapshots() {
+    return {
+      describe: vi.fn(async () => ({ directory: "", limit: 0, latest: null, count: 0 })),
+      create_for_run: vi.fn(async () => ({
+        file: ".run-12345678.lg.zip",
+        created_at: new Date().toISOString(),
+        reason: "before-workspace-run" as const,
+        app_version: "1.2.3",
+        size: 1,
+        kind: "full" as const,
+        project_hash: "",
+        fingerprint: "",
+        anchor: false,
+        protect: false,
+        task: "round-1",
+      })),
+      create: vi.fn(async () => null),
+      discard_run_points: vi.fn(),
+    };
+  }
+
+  it("workspace_run 使用独立恢复点，无外部写入时轮次结束自动丢弃", async () => {
+    const snapshots = create_run_point_snapshots();
+    const { service } = await create_service({ snapshots });
+    fake_agent_state.mode = "tool_only";
+    await service.send_message({ text: "查询", attachments: [] });
+    await wait_for_idle(service);
+    expect(snapshots.create_for_run).toHaveBeenCalledWith(
+      "test.lg",
+      expect.any(String),
+      "before-workspace-run",
+    );
+    expect(snapshots.discard_run_points).toHaveBeenCalledWith("test.lg", expect.any(String));
+    expect(service.get_snapshot().entries).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_call",
+        toolName: "workspace_run",
+        status: "success",
+        output: expect.arrayContaining([expect.stringContaining(".run-12345678.lg.zip")]),
+      }),
+    );
+  });
+
+  it("脚本直接写入工程时保留恢复点，轮次结束不丢弃", async () => {
+    const snapshots = create_run_point_snapshots();
+    const { service } = await create_service({
+      snapshots,
+      projectHashSequence: ["before", "after"],
+    });
+    fake_agent_state.mode = "tool_only";
+    await service.send_message({ text: "查询", attachments: [] });
+    await wait_for_idle(service);
+    expect(snapshots.discard_run_points).not.toHaveBeenCalled();
+    expect(service.get_snapshot().entries).toContainEqual(
+      expect.objectContaining({
+        kind: "tool_call",
+        toolName: "workspace_run",
+        output: expect.arrayContaining([expect.stringContaining('"external_project_write":true')]),
+      }),
+    );
+  });
+
   it("模型回合按 user、assistant、tool_call、assistant 的真实时序追加条目", async () => {
     const { service, publish } = await create_service();
     fake_agent_state.mode = "tools";
@@ -4475,12 +4537,16 @@ describe("AgentService", () => {
       }),
     },
     catalog = { read_models: read_builtin_pi_models },
+    snapshots,
+    projectHashSequence = ["", ""],
   }: {
     load_resources?: boolean;
     batch_requests?: ConstructorParameters<typeof AgentService>[0]["batchRequests"];
     batch_translation?: ConstructorParameters<typeof AgentService>[0]["batchTranslation"];
     images?: ConstructorParameters<typeof AgentService>[0]["images"];
     catalog?: PiModelCatalogReader;
+    snapshots?: ConstructorParameters<typeof AgentService>[0]["snapshots"];
+    projectHashSequence?: string[];
   } = {}): Promise<{
     workspace: AgentWorkspacePort;
     service: AgentService;
@@ -4611,8 +4677,12 @@ describe("AgentService", () => {
       runtime_gate,
     );
     const connections = new Map<string, NodeSqliteDatabase>();
+    let state_call = 0;
     const database = {
-      read_project_state: async () => ({ fingerprint: "", project_hash: "" }),
+      read_project_state: async () => ({
+        fingerprint: "",
+        project_hash: projectHashSequence[Math.min(state_call++, projectHashSequence.length - 1)]!,
+      }),
       open_agent_store: (project: string) => {
         let connection = connections.get(project);
         if (connection === undefined) {
@@ -4655,6 +4725,7 @@ describe("AgentService", () => {
       sessionState: session_state,
       runtimeGate: runtime_gate,
       workspace,
+      ...(snapshots === undefined ? {} : { snapshots }),
       logManager: { append: log_append },
       publish,
     });

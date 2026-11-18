@@ -107,6 +107,7 @@ export type AgentExecution = {
   steer: SubmittedInput | null;
   retrySteer: SubmittedInput | null;
   batchStopped: boolean; // 用户停止任一批量工具后，本轮拒绝从两个入口再次启动。
+  runPoint: { projectPath: string; task: string; externalWrite: boolean } | null; // 脚本前恢复点；发生外部写入时保留到轮次结束。
 };
 
 type ChatOptions = {
@@ -475,6 +476,7 @@ export class AgentChat {
       steer: null,
       retrySteer: null,
       batchStopped: false,
+      runPoint: null,
     };
     this.execution = execution;
     return execution;

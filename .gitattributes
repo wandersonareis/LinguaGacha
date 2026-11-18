@@ -1,0 +1,30 @@
+# Texto: LF no repositório, CRLF no diretório de trabalho (CRLF predomina no projeto).
+* text=auto eol=crlf
+
+# Binários nunca são normalizados, mesmo se a detecção automática os classificar como texto.
+*.png   binary
+*.webp  binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.bmp   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.7z    binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.wasm  binary
+*.node  binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+*.mp3   binary
+*.ogg   binary
+*.mp4   binary
+*.webm  binary
+*.asar  binary

@@ -16,7 +16,11 @@ import {
 import { default_native_fs as fs } from "../../native/native-fs";
 import type { RuntimeLease } from "../runtime-operation-gate";
 import type { ChatGPTAuthService } from "../auth/chatgpt-auth-service";
-import { LLM_REQUEST_MAX_BYTES, read_model_request_snapshot } from "../llm/llm-request";
+import {
+  LLM_REQUEST_MAX_BYTES,
+  read_model_request_snapshot,
+  read_request_timeout_ms,
+} from "../llm/llm-request";
 import type {
   LLMClientPort,
   LLMMessage,
@@ -242,17 +246,14 @@ export class BatchRequestService {
           >({
             model,
             rate: this.rates.resolve(model),
-            dispatch: async ({ id, payload }, key, request_signal, attempt) => {
-              const config_snapshot =
-                attempt.timeout_ms === null
-                  ? settings
-                  : { ...settings, request_timeout: attempt.timeout_ms / 1_000 };
+            timeout_ms: read_request_timeout_ms(settings),
+            dispatch: async ({ id, payload }, key, request_signal) => {
               const received = await this.client.request(
                 {
                   run_id: handle.run_id,
                   work_unit_id: id,
                   model: { ...model, api_key: key },
-                  config_snapshot,
+                  config_snapshot: settings,
                   messages: payload["messages"] as unknown as LLMMessage[],
                   ...(auth_session === undefined ? {} : { auth_session }),
                 },

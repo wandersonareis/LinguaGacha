@@ -85,7 +85,7 @@ export function create_agent_workspace_run_tool(options: {
       "|`stdout`、`stderr`|`{ path, bytes, content }`，超额时以 `message` 补读提示代替 `content`|",
       "|`images`|`emitImage` 输出的图片信息|",
       "|`external_project_write`|脚本直接改了 `.lg` 时为 `true`；此时必须停止，先恢复 `restore_point`，不要继续修正|",
-      "|`restore_point`|本次脚本前的 full 快照文件名；用于 Agent 恢复|",
+      "|`restore_point`|本次脚本前的 full 恢复点文件名，独立于快照数量与列表；用于 Agent 恢复，轮次正常结束后自动丢弃|",
       "",
       "### 失败与恢复",
       "",

@@ -64,6 +64,23 @@ type SnapshotManifest = {
 
 const MANIFEST_FILE = "manifest.json";
 const BACKUP_ROOT = ["backups", "projects"] as const;
+const RUN_POINT_PREFIX = ".run-";
+
+/** 脚本前恢复点按任务哈希固定命名，不进入 manifest，也不占用快照数量限制。 */
+function run_point_file(task_token: string): string {
+  const hash = createHash("sha256").update(task_token).digest("hex").slice(0, 8);
+  return `${RUN_POINT_PREFIX}${hash}${PROJECT_SNAPSHOT_ARCHIVE_SUFFIX}`;
+}
+
+function is_run_point_file(file: string): boolean {
+  if (!file.startsWith(RUN_POINT_PREFIX) || !file.endsWith(PROJECT_SNAPSHOT_ARCHIVE_SUFFIX))
+    return false;
+  const hash = file.slice(
+    RUN_POINT_PREFIX.length,
+    file.length - PROJECT_SNAPSHOT_ARCHIVE_SUFFIX.length,
+  );
+  return /^[0-9a-f]{8}$/u.test(hash);
+}
 
 /**
  * 工程自动快照。写入 `userdata/backups/projects/<nome>-<hash8>/`，
@@ -152,35 +169,13 @@ export class ProjectSnapshotService {
 
       const created_at = new Date().toISOString();
       const file = `${created_at.replace(/[:.]/g, "-")}_${reason}${PROJECT_SNAPSHOT_ARCHIVE_SUFFIX}`;
-      const target_path = path.join(directory, file);
-      const temporary_lg_path = `${target_path}.tmp.lg`;
-      const temporary_archive_path = `${target_path}.tmp`;
-      try {
-        await this.database.export_snapshot(project_path, temporary_lg_path);
-        await write_project_snapshot_archive(
-          this.native_fs,
-          temporary_lg_path,
-          temporary_archive_path,
-        );
-        this.native_fs.rename(temporary_archive_path, target_path);
-        this.remove_best_effort(temporary_lg_path);
-        this.remove_best_effort(temporary_archive_path);
-      } catch (error) {
-        this.remove_best_effort(temporary_lg_path);
-        this.remove_best_effort(temporary_archive_path);
-        throw new AppError("project.snapshot_failed", {
-          message:
-            "The project could not be backed up, so the operation was cancelled to protect your translations.",
-          cause: error,
-          diagnostic_context: { operation: "create_snapshot", reason },
-        });
-      }
+      await this.write_snapshot_file(project_path, directory, file, reason);
       const snapshot: ProjectSnapshot = {
         file,
         created_at,
         reason,
         app_version: this.metadata.read_version_or_default(),
-        size: this.native_fs.stat(target_path).size,
+        size: this.native_fs.stat(path.join(directory, file)).size,
         kind: "full",
         project_hash: state.project_hash,
         fingerprint: state.fingerprint,
@@ -195,17 +190,94 @@ export class ProjectSnapshotService {
     return created;
   }
 
-  /** 每个 workspace_run 前保存 full 预脚本点；同内容去重并保护当前任务。 */
-  public create_for_run(
+  /**
+   * 脚本前恢复点：每任务一个固定文件名，不进入 manifest 与数量限制。
+   * 同任务重复调用复用已有文件，保留脚本写入前的状态。
+   */
+  public async create_for_run(
     project_path: string,
     task_token: string,
     reason: ProjectSnapshotReason,
   ): Promise<ProjectSnapshot | null> {
-    return this.create(project_path, reason, {
-      task: task_token,
-      protect: true,
-      dedup: true,
-    });
+    if (!this.enabled || this.current_limit() <= 0) return null;
+    const directory = this.directory(project_path);
+    this.native_fs.make_dir(directory);
+    const file = run_point_file(task_token);
+    // 只保留当前任务的点；上一轮未被 apply 取代的遗留文件在此回收。
+    for (const entry of this.native_fs.read_dirents(directory)) {
+      if (!entry.isFile() || !is_run_point_file(entry.name) || entry.name === file) continue;
+      this.remove_best_effort(path.join(directory, entry.name));
+    }
+    if (!this.native_fs.exists(path.join(directory, file))) {
+      await this.write_snapshot_file(project_path, directory, file, reason);
+    }
+    return this.describe_run_point(directory, file, reason, task_token);
+  }
+
+  /** 丢弃脚本前恢复点；传入 task 时只丢该任务，否则丢弃本工程全部。 */
+  public discard_run_points(project_path: string, task_token?: string | null): void {
+    const directory = this.directory(project_path);
+    if (!this.native_fs.exists(directory)) return;
+    const only = task_token == null ? null : run_point_file(task_token);
+    for (const entry of this.native_fs.read_dirents(directory)) {
+      if (!entry.isFile() || !is_run_point_file(entry.name)) continue;
+      if (only !== null && entry.name !== only) continue;
+      this.remove_best_effort(path.join(directory, entry.name));
+    }
+  }
+
+  /** 导出、压缩并原子落盘；失败时清理临时文件并拒绝操作。 */
+  private async write_snapshot_file(
+    project_path: string,
+    directory: string,
+    file: string,
+    reason: ProjectSnapshotReason,
+  ): Promise<void> {
+    const target_path = path.join(directory, file);
+    const temporary_lg_path = `${target_path}.tmp.lg`;
+    const temporary_archive_path = `${target_path}.tmp`;
+    try {
+      await this.database.export_snapshot(project_path, temporary_lg_path);
+      await write_project_snapshot_archive(
+        this.native_fs,
+        temporary_lg_path,
+        temporary_archive_path,
+      );
+      this.native_fs.rename(temporary_archive_path, target_path);
+      this.remove_best_effort(temporary_lg_path);
+      this.remove_best_effort(temporary_archive_path);
+    } catch (error) {
+      this.remove_best_effort(temporary_lg_path);
+      this.remove_best_effort(temporary_archive_path);
+      throw new AppError("project.snapshot_failed", {
+        message:
+          "The project could not be backed up, so the operation was cancelled to protect your translations.",
+        cause: error,
+        diagnostic_context: { operation: "create_snapshot", reason },
+      });
+    }
+  }
+
+  private describe_run_point(
+    directory: string,
+    file: string,
+    reason: ProjectSnapshotReason,
+    task: string | null,
+  ): ProjectSnapshot {
+    const stat = this.native_fs.stat(path.join(directory, file));
+    return {
+      file,
+      created_at: new Date(stat.mtimeMs).toISOString(),
+      reason,
+      app_version: this.metadata.read_version_or_default(),
+      size: stat.size,
+      kind: "full",
+      project_hash: "",
+      fingerprint: "",
+      anchor: false,
+      protect: false,
+      task,
+    };
   }
 
   /** 读取当前工程快照，manifest 丢失时回退到目录扫描。 */
@@ -306,13 +378,14 @@ export class ProjectSnapshotService {
     project_path: string,
     file: unknown,
   ): { snapshot: ProjectSnapshot; file_path: string } {
+    const run_point = typeof file === "string" && is_run_point_file(file);
     if (
       typeof file !== "string" ||
       file === "" ||
       path.basename(file) !== file ||
       !is_project_snapshot_file(file) ||
       file.includes("\0") ||
-      file.startsWith(".")
+      (!run_point && file.startsWith("."))
     ) {
       throw new AppError("request.validation_failed");
     }
@@ -320,6 +393,12 @@ export class ProjectSnapshotService {
     const file_path = path.join(directory, file);
     if (!this.native_fs.exists(file_path)) {
       throw new AppError("project.snapshot_not_found");
+    }
+    if (run_point) {
+      return {
+        snapshot: this.describe_run_point(directory, file, "before-workspace-run", null),
+        file_path,
+      };
     }
     const manifest = this.read_manifest(directory);
     const snapshot = manifest?.snapshots.find((entry) => entry.file === file) ?? {

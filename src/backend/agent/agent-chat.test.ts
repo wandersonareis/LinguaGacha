@@ -379,6 +379,7 @@ async function talk(chat: AgentChat, text: string) {
     steer: null,
     retrySteer: null,
     batchStopped: false,
+    runPoint: null,
   };
   chat.execution = execution;
   const input = await chat.submit(
@@ -715,6 +716,7 @@ it("压缩后修订早期输入在受理时切换历史与旧意图，并采用�
     steer: null,
     retrySteer: null,
     batchStopped: false,
+    runPoint: null,
   };
   chat.execution = execution;
   const accepted = await chat.submit(
