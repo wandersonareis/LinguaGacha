@@ -134,17 +134,19 @@ export const AgentMarkdown = memo(function AgentMarkdown(props: AgentMarkdownPro
   const { resolved_theme, font_size_preference } = useAppearance();
 
   const markdown_ref = useRef<HTMLDivElement>(null);
+  const applied_appearance_ref = useRef<string | null>(null); // Activity 显示会重建 Effects，同一外观不能重复发布插件实例。
   const [diagram_config, set_diagram_config] = useState<MermaidConfig>(() => ({
     theme: resolved_theme === "dark" ? "dark" : "default",
   }));
   // 等待外观投影生效，再读取配色和正文实际字号供图表布局使用。
   useEffect(() => {
+    const appearance = `${resolved_theme}:${font_size_preference}`;
+    if (applied_appearance_ref.current === appearance) return;
     const frame = requestAnimationFrame(() => {
-      if (markdown_ref.current) {
-        set_diagram_config(
-          build_mermaid_config(resolved_theme, getComputedStyle(markdown_ref.current).fontSize),
-        );
-      }
+      const markdown = markdown_ref.current;
+      if (markdown === null) return;
+      applied_appearance_ref.current = appearance;
+      set_diagram_config(build_mermaid_config(resolved_theme, getComputedStyle(markdown).fontSize));
     });
     return () => cancelAnimationFrame(frame);
   }, [resolved_theme, font_size_preference]);

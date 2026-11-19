@@ -19,6 +19,7 @@ import { AppearanceProvider } from "@frontend/app/appearance/appearance-provider
 import { useAppearance } from "@frontend/app/appearance/appearance-context";
 import { SCREEN_REGISTRY } from "@frontend/app/navigation/screen-registry";
 import { AppNavigationProvider } from "@frontend/app/navigation/navigation-provider";
+import { ScreenOutlet } from "@frontend/app/navigation/screen-outlet";
 import { DesktopStateProvider } from "@frontend/app/state/desktop-state-provider";
 import { ProjectSessionUiStateProvider } from "@frontend/app/session/project-session-ui-state-provider";
 import { AgentChatProvider } from "@frontend/app/session/agent/agent-chat-provider";
@@ -466,7 +467,10 @@ function AppContent(): JSX.Element {
                           <ProjectTranslationStatsProvider>
                             <BatchTaskSessionProvider>
                               <QualityRuleStatisticsProvider>
-                                <ScreenComponent />
+                                <ScreenOutlet
+                                  selected_route={selected_route}
+                                  active_component={ScreenComponent}
+                                />
                               </QualityRuleStatisticsProvider>
                             </BatchTaskSessionProvider>
                           </ProjectTranslationStatsProvider>

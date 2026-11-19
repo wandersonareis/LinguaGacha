@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, Activity, useState, type JSX } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   api_fetch: vi.fn(),
   api_blob: vi.fn(),
   push_toast: vi.fn(),
+  create_mermaid_plugin: vi.fn(),
 }));
 
 vi.mock("@frontend/app/desktop/desktop-api", () => ({
@@ -27,6 +28,17 @@ vi.mock("@frontend/app/locale/locale-context", () => ({
 vi.mock("@frontend/app/appearance/appearance-context", () => ({
   useAppearance: () => ({ resolved_theme: "light" }),
 }));
+// 保留官方插件实现，只记录主题配置何时产生新实例。
+vi.mock("@streamdown/mermaid", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@streamdown/mermaid")>();
+  return {
+    ...actual,
+    createMermaidPlugin: (options: Parameters<typeof actual.createMermaidPlugin>[0]) => {
+      mocks.create_mermaid_plugin(options);
+      return actual.createMermaidPlugin(options);
+    },
+  };
+});
 
 import { AgentFileContext } from "./agent-file-context";
 import { AgentMarkdown } from "./agent-markdown";
@@ -48,6 +60,7 @@ describe("AgentMarkdown", () => {
     mocks.open_file.mockClear();
     mocks.api_blob.mockReset();
     mocks.push_toast.mockReset();
+    mocks.create_mermaid_plugin.mockClear();
   });
 
   afterEach(async () => {
@@ -335,5 +348,40 @@ describe("AgentMarkdown", () => {
     expect(alert?.querySelector(".markdown-alert-title")?.textContent).toBe("IMPORTANT");
     expect(alert?.querySelector("strong")?.textContent).toBe("重点");
     expect(alert?.textContent).not.toContain("[!IMPORTANT]");
+  });
+
+  it("Activity 显示后不重建图表插件实例", async () => {
+    let hide!: () => void;
+    let show!: () => void;
+    /** 复用同一 Markdown 实例，隐藏和显示只重建 Effects。 */
+    function Host(): JSX.Element {
+      const [visible, set_visible] = useState(true);
+      hide = () => set_visible(false);
+      show = () => set_visible(true);
+      return (
+        <Activity mode={visible ? "visible" : "hidden"}>
+          <AgentFileContext
+            value={{ chat_id: "session", active: true, open_file: mocks.open_file }}
+          >
+            <AgentMarkdown text="# 标题" streaming={false} />
+          </AgentFileContext>
+        </Activity>
+      );
+    }
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<Host />));
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const calls = mocks.create_mermaid_plugin.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+
+    await act(async () => hide());
+    await act(async () => show());
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+    // Activity 显示会重建 Effects，但同一外观不能发布新的图表插件并触发整段重解析。
+    expect(mocks.create_mermaid_plugin).toHaveBeenCalledTimes(calls);
   });
 });

@@ -26,11 +26,14 @@ export function useAgentPreviews(chat_id: string) {
   const requests = useRef(new Map<string, AbortController>());
   const intent = useRef(0); // 只裁决选中项；较慢的有效读取仍可追加后台标签。
   const scroll = useRef<Record<string, number>>({});
+  const restored_chat_ref = useRef<string | null>(null); // Activity 隐藏后重建 Effects 时不能重放旧恢复批次。
+  const dismissed_paths = useRef(new Set<string>()); // 恢复被中断后重试时，用户已关闭的标签不能再次出现。
 
   /** 文件入口已经完成读取，标签只发布描述、锚点和新的刷新意图。 */
   const open_file = useCallback((href: string, file: AgentFile): void => {
     const activation = ++intent.current;
     const anchor = href.includes("#") ? href.slice(href.indexOf("#") + 1) : null;
+    dismissed_paths.current.delete(file.path);
     requests.current.get(file.path)?.abort();
     set_state((previous) => {
       const next = { ...file, anchor, activation };
@@ -52,6 +55,7 @@ export function useAgentPreviews(chat_id: string) {
   /** 关闭当前文档选择相邻页，并取消该路径尚未完成的读取。 */
   const close = useCallback((path: string): void => {
     intent.current += 1;
+    dismissed_paths.current.add(path);
     requests.current.get(path)?.abort();
     delete scroll.current[path];
     set_state((previous) => {
@@ -69,11 +73,18 @@ export function useAgentPreviews(chat_id: string) {
 
   useEffect(() => {
     let active = true; // StrictMode 重连或离页后，旧恢复批次不能写回新实例。
+    // Activity 隐藏会销毁并重建 Effects，已完成的恢复不能重放旧标签和阅读位置。
+    if (restored_chat_ref.current === chat_id) {
+      restoring.current = false;
+      return;
+    }
     const restore_intent = intent.current;
     if (chat_id && saved?.chat_id === chat_id) {
-      scroll.current = saved.scroll;
+      restoring.current = true;
+      scroll.current = { ...saved.scroll, ...scroll.current };
       // 恢复期间手动打开或关闭文件会取消对应读取，迟到描述不能重新打开旧标签。
-      const restoring_requests = saved.paths.map((path) => {
+      const restore_paths = saved.paths.filter((path) => !dismissed_paths.current.has(path));
+      const restoring_requests = restore_paths.map((path) => {
         const controller = new AbortController();
         requests.current.set(path, controller);
         return api_fetch<AgentFile>(
@@ -92,6 +103,7 @@ export function useAgentPreviews(chat_id: string) {
       });
       void Promise.all(restoring_requests).then((results) => {
         if (!active) return;
+        restored_chat_ref.current = chat_id;
         restoring.current = false;
         set_state((previous) => {
           const restored = results
@@ -99,7 +111,7 @@ export function useAgentPreviews(chat_id: string) {
               (item, index): item is AgentFile =>
                 item !== null &&
                 item.preview !== null &&
-                !requests.current.get(saved.paths[index]!)?.signal.aborted,
+                !requests.current.get(restore_paths[index]!)?.signal.aborted,
             )
             .filter((item) => !previous.documents.some((current) => current.path === item.path))
             .map((item) => ({ ...item, anchor: null, activation: 0 }));
@@ -114,7 +126,10 @@ export function useAgentPreviews(chat_id: string) {
           };
         });
       });
-    } else restoring.current = false;
+    } else {
+      restored_chat_ref.current = chat_id;
+      restoring.current = false;
+    }
     const pending = requests.current;
     return () => {
       active = false;

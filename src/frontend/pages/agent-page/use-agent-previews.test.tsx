@@ -1,4 +1,4 @@
-import { act, StrictMode } from "react";
+import { act, Activity, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAgentPreviews } from "./use-agent-previews";
@@ -27,10 +27,24 @@ vi.mock("@frontend/app/session/project-session-ui-state-context", () => ({
 let root: Root;
 let container: HTMLDivElement;
 let state: ReturnType<typeof useAgentPreviews>;
+let activity_controls: { show: () => void; hide: () => void };
 /** 直接观察 Hook 的公开状态，异步验证不依赖菜单和 Markdown 渲染。 */
 function Harness({ session }: { session: string }) {
   state = useAgentPreviews(session);
   return null;
+}
+/** 用 Activity 模拟跨路由隐藏和显示，组件实例和局部状态保持不变。 */
+function ActivityHarness({ session }: { session: string }) {
+  const [visible, set_visible] = useState(true);
+  activity_controls = {
+    show: () => set_visible(true),
+    hide: () => set_visible(false),
+  };
+  return (
+    <Activity mode={visible ? "visible" : "hidden"}>
+      <Harness session={session} />
+    </Activity>
+  );
 }
 /** 文件名称用于区分恢复结果与用户重新打开的描述。 */
 function document(path: string, name = "报告"): AgentFile {
@@ -116,4 +130,34 @@ it("恢复期间选择对话仍恢复文件和阅读位置，保留用户选中�
   expect(state.documents.map((item) => item.path)).toEqual(["work/a.md"]);
   expect(state.selected).toBeNull();
   expect(state.scroll.current["work/a.md"]).toBe(80);
+});
+
+it("Activity 隐藏后显示不重放已完成的恢复批次", async () => {
+  mocks.saved = {
+    chat_id: "session",
+    paths: ["work/a.md", "work/b.md"],
+    selected: "work/a.md",
+    scroll: { "work/a.md": 40, "work/b.md": 80 },
+  };
+  await act(async () =>
+    root.render(
+      <StrictMode>
+        <ActivityHarness session="session" />
+      </StrictMode>,
+    ),
+  );
+  expect(state.documents.map((item) => item.path)).toEqual(["work/a.md", "work/b.md"]);
+  const restore_calls = mocks.api.mock.calls.length;
+
+  await act(async () => state.close("work/a.md"));
+  expect(state.selected).toBe("work/b.md");
+
+  await act(async () => activity_controls.hide());
+  await act(async () => activity_controls.show());
+
+  // 恢复批次只在真实挂载时执行，隐藏和显示不能重新打开已关闭标签或重置阅读位置。
+  expect(mocks.api).toHaveBeenCalledTimes(restore_calls);
+  expect(state.documents.map((item) => item.path)).toEqual(["work/b.md"]);
+  expect(state.selected).toBe("work/b.md");
+  expect(state.scroll.current["work/b.md"]).toBe(80);
 });
