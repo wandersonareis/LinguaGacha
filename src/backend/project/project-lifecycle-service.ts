@@ -829,8 +829,10 @@ export class ProjectLifecycleService {
 
   private acquire_project_lock(project_path: string): Promise<ProjectFileLock> {
     return ProjectFileLock.acquire(project_path, {
-      data_root: this.paths.get_data_root(),
+      data_root: this.paths.get_user_data_root_dir(),
       native_fs: this.native_fs,
+      on_compromised: ({ location, error }) =>
+        this.report_project_lock_warning("compromised", error, location),
     });
   }
 
@@ -869,10 +871,14 @@ export class ProjectLifecycleService {
     }
   }
 
-  private report_project_lock_warning(operation: string, error: unknown): void {
-    this.log_manager.warning("工程锁释放失败。", {
+  private report_project_lock_warning(
+    operation: string,
+    error: unknown,
+    location?: string,
+  ): void {
+    this.log_manager.warning("工程锁状态异常。", {
       source: "project_lock",
-      context: { operation },
+      context: { operation, ...(location === undefined ? {} : { location }) },
       error,
       targets: { window: false },
     });

@@ -63,6 +63,7 @@
 - 需要强制重新准备时，删除开发缓存 `build/dev/resources/.development-cache` 或 `build/dev/resources/`。
 - 资源构建按输出目录互斥。`npm run build` 始终重新准备资源，发行构建不复用开发缓存。
 - `npm run build` 包含 TypeScript 检查和静态资源生成，`afterPack` 再按实际目标部署原生工具。开发与发行的原生工具准备均需要 Go 工具链。
+- 工程锁的防删除 guard 由 `npm run build:native` 用 `node-gyp` 按 Electron 头文件编译 `native/file-lock/`，产物复制到 `build/dist-electron/native/` 并从 ASAR 解包加载。Windows 编译需要 Visual Studio 的“使用 C++ 的桌面开发”工作负载；缺少时构建告警并继续，guard 退化为不可用。发布构建可用 `LG_REQUIRE_NATIVE_LOCK=1` 让该失败终止打包。
 - CLI 命令按实际安装位置定位可执行文件，参数和资源扩展名以帮助为准。
 - CLI 输出字段与退出码见上表对应实现和测试。
 - Windows 更新日志位于安装目录的 `log/update.log`，每次运行覆盖旧日志，可与应用日志一起收集。

@@ -6,6 +6,7 @@ export default {
   appId: "me.neavo.linguagacha",
   extraMetadata: { main: "build/dist-electron/index.js" }, // 根清单启动开发应用，发行清单只指向发行产物。
   asar: true,
+  asarUnpack: ["build/dist-electron/native/*.node"], // lock guard 原生模块必须从 ASAR 外加载
   electronFuses: { runAsNode: true }, // 工作区复用 Electron 的 Node 子进程入口
   extraResources: [
     { from: "builtin", to: "builtin" }, // 业务按真实路径读取版本资源
