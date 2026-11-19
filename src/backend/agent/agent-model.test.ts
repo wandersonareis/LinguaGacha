@@ -131,8 +131,29 @@ describe("Agent 批量模型", () => {
     },
   );
 
+  it("批量翻译未指定模型时沿用翻译模型，媒体继续跟随主控", () => {
+    const agent_model = Model.from_json(
+      { model_id: "fixture-model", thinking: { level: "LOW" } },
+      "a",
+    );
+    const translation_model = { ...agent_model.to_json(), thinking: { level: "HIGH" } };
+    const config = {
+      model_selection: {
+        translation: "translation",
+        agent: "b",
+        agent_batch_translation: null as string | null,
+        agent_media: null as string | null,
+      },
+      models: [{ ...translation_model, id: "translation" }],
+    };
+    expect(
+      resolve_agent_batch_model(config, agent_model, "batch_translation", [], true).to_json(),
+    ).toEqual({ ...translation_model, id: "translation" });
+    expect(resolve_agent_batch_model(config, agent_model, "media", [], true)).toEqual(agent_model);
+  });
+
   it.each(["batch_translation", "media"] as const)(
-    "%s 缺少能力时沿用配置，固定选择使用保存配置",
+    "%s 固定选择使用保存配置，缺失模型明确报错",
     (usage) => {
       const agent_model = Model.from_json(
         { model_id: "fixture-model", thinking: { level: "LOW" } },
@@ -140,6 +161,7 @@ describe("Agent 批量模型", () => {
       );
       const config = {
         model_selection: {
+          translation: "a",
           agent: "b",
           agent_batch_translation: null as string | null,
           agent_media: null as string | null,
@@ -157,7 +179,6 @@ describe("Agent 批量模型", () => {
           maxTokens: 16_000,
         },
       ];
-      expect(resolve_agent_batch_model(config, agent_model, usage, [], true)).toEqual(agent_model);
       config.model_selection[usage === "media" ? "agent_media" : "agent_batch_translation"] = "a";
       const fixed = resolve_agent_batch_model(config, agent_model, usage, models, true);
       expect(fixed.thinking.level).toBe("OFF");

@@ -18,6 +18,7 @@ import {
 type AgentBatchTranslationResult = Readonly<{
   status: BatchTranslationResult["status"];
   stop_source?: BatchTranslationStopSource;
+  model?: Readonly<{ name: string; model_id: string }>;
   items: Readonly<{ total: number; succeeded: number; failed: number; unfinished: number }> | null;
   usage: Readonly<{
     elapsed_seconds: number;
@@ -31,11 +32,13 @@ type AgentBatchTranslationResult = Readonly<{
 /** 模型回执只表达本次调用，正常与失败回执共用统计口径。 */
 function format_batch_translation_result(
   result: BatchTranslationResult,
+  model?: Readonly<{ name: string; model_id: string }>,
 ): AgentBatchTranslationResult {
   const progress = result.run_progress;
   return {
     status: result.status,
     ...(result.stop_source === undefined ? {} : { stop_source: result.stop_source }),
+    ...(model === undefined ? {} : { model }),
     items:
       progress === undefined
         ? null
@@ -65,6 +68,7 @@ export function create_agent_batch_item_translation_tool(
     thinking_downgrade: boolean,
     signal: AbortSignal,
   ) => Promise<BatchTranslationResult>,
+  describe_model?: () => Readonly<{ name: string; model_id: string }> | null,
 ): ToolRegistration {
   return define_agent_tool({
     name: "batch_item_translation",
@@ -118,20 +122,22 @@ export function create_agent_batch_item_translation_tool(
     executionMode: "sequential",
     execute: async ({ thinking_downgrade = true, ...request }, _api, context) => {
       try {
+        const result = await run(
+          request,
+          thinking_downgrade,
+          context.abortSignal ?? new AbortController().signal, // 宿主未提供取消信号时使用不会触发的信号
+        );
         return agent_tool_result(
-          format_batch_translation_result(
-            await run(
-              request,
-              thinking_downgrade,
-              context.abortSignal ?? new AbortController().signal, // 宿主未提供取消信号时使用不会触发的信号
-            ),
-          ),
+          format_batch_translation_result(result, describe_model?.() ?? undefined),
         );
       } catch (error) {
         if (error instanceof BatchTranslationCompletionError) {
           const failure = normalize_agent_tool_error(error.cause);
           // 错误回执本身表达失败，`status` 留给原因的公开详情，例如供应商 HTTP 状态。
-          const { status: _status, ...summary } = format_batch_translation_result(error.result);
+          const { status: _status, ...summary } = format_batch_translation_result(
+            error.result,
+            describe_model?.() ?? undefined,
+          );
           throw new AgentToolError({ ...failure.details, ...summary }, error, failure.severity);
         }
         throw error;

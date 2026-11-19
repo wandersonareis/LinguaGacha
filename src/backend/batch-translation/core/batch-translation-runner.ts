@@ -29,7 +29,12 @@ import type {
 import type { TranslationCommitEntry } from "./translation-pipeline";
 import type { TranslationContext } from "../planning/translation-plan-types";
 import { plan_translation_retry } from "../planning/translation-retry";
-import { resolve_request_limits, type RequestRatePool } from "../../batch-task/request-rate";
+import {
+  BATCH_CONCURRENCY_INITIAL,
+  BATCH_CONCURRENCY_SUCCESS_STREAK,
+  resolve_request_limits,
+  type RequestRatePool,
+} from "../../batch-task/request-rate";
 import { RequestScheduler } from "../../batch-task/request-scheduler";
 import { TranslationPipeline } from "./translation-pipeline";
 import { TranslationProgressAccumulator } from "./progress-accumulator";
@@ -131,9 +136,14 @@ export class BatchTranslationRunner {
       if (run_context.model.auth_type === "oauth" && auth_session === undefined)
         throw new Error("ChatGPT authentication is not configured");
       await this.task_runtime.publish_status(handle, "running");
+      const limits = resolve_request_limits(run_context.model);
       await this.task_runtime.publish_config(handle, {
         model_config_id: run_context.model.id,
-        ...resolve_request_limits(run_context.model),
+        ...limits,
+        // 自动模式从保守额度开始，快照展示实际启动并发而不是上限。
+        concurrency_limit: limits.auto_concurrency
+          ? BATCH_CONCURRENCY_INITIAL
+          : limits.concurrency_limit,
         model_name: run_context.model.name,
         model_id: run_context.model.model_id,
         thinking_level: run_context.model.thinking.level,
@@ -162,6 +172,8 @@ export class BatchTranslationRunner {
       const request_scheduler = new RequestScheduler({
         model: run_context.model,
         timeout_ms: read_request_timeout_ms(run_context.config_snapshot),
+        initial_concurrency: BATCH_CONCURRENCY_INITIAL,
+        concurrency_success_streak: BATCH_CONCURRENCY_SUCCESS_STREAK,
         dispatch: (body: LLMRequestBody, key, signal) =>
           this.llm_client.request(
             {

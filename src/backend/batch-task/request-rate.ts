@@ -3,6 +3,8 @@ import { read_json_integer, read_json_record } from "../../domain/json";
 export const AUTO_CONCURRENCY_INITIAL = 4; // 自动模式的启动额度与上下界由产品规则固定。
 export const AUTO_CONCURRENCY_MIN = 1;
 export const AUTO_CONCURRENCY_MAX = 16;
+export const BATCH_CONCURRENCY_INITIAL = 1; // 批量工具从单请求开始，避免免费端点被冷启动并发打满。
+export const BATCH_CONCURRENCY_SUCCESS_STREAK = 3; // 连续成功后再升一档，失败和超时会立即退让。
 const ONE_MINUTE_MS = 60_000;
 const ONE_SECOND_MS = 1_000;
 type RequestModelRecord = Record<string, unknown>;

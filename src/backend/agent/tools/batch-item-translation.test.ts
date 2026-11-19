@@ -139,6 +139,20 @@ describe("Agent 条目批量翻译工具", () => {
     }
   });
 
+  it("回执包含本次实际使用的模型", async () => {
+    const summary = {
+      status: "done" as const,
+      progress: normalize_batch_translation_progress({}),
+    };
+    const tool = create_agent_batch_item_translation_tool(
+      async () => summary,
+      () => ({ name: "ChatGPT", model_id: "gpt-6-luna" }),
+    );
+    expect(await tool.execute({ item_ids: [1] }, ...agent_tool_call("batch"))).toMatchObject({
+      details: { model: { name: "ChatGPT", model_id: "gpt-6-luna" } },
+    });
+  });
+
   it("已确定零目标返回零计数", async () => {
     const tool = create_agent_batch_item_translation_tool(async () => ({
       status: "done",

@@ -201,6 +201,33 @@ describe("RequestScheduler", () => {
     ).toBe(4);
   });
 
+  it("批量入口从 1 开始，连续成功达到门槛后才升档", async () => {
+    const model = { api_key: "A", threshold: { concurrency_limit: 0, rpm_limit: 0 } };
+    const scheduler = new RequestScheduler<LLMRequestBody, LLMRequestResult>({
+      model,
+      timeout_ms: 60_000,
+      initial_concurrency: 1,
+      concurrency_success_streak: 3,
+      rate: new RequestRatePool().resolve(model),
+      dispatch: async () => response(),
+      on_state: vi.fn(),
+      on_failure: vi.fn(),
+      timeout_error,
+      retry_exhausted_message,
+    });
+    expect(scheduler.read_concurrency_limit()).toBe(1);
+    for (let count = 0; count < 2; count += 1) {
+      const result = scheduler.request(body(), new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await result;
+    }
+    expect(scheduler.read_concurrency_limit()).toBe(1);
+    const third = scheduler.request(body(), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await third;
+    expect(scheduler.read_concurrency_limit()).toBe(2);
+  });
+
   it.each([
     [64, 0, 64],
     [0, 60, 60],
@@ -260,26 +287,18 @@ describe("RequestScheduler", () => {
     expect(scheduler.read_concurrency_limit()).toBe(2);
   });
 
-  it("非 429 网络错误和取消不调整额度，内容终态错误仍计请求成功", async () => {
+  it("超时降低自动并发，随后成功只按恢复节奏升档", async () => {
     const request = vi
       .fn<LLMClientPort["request"]>()
       .mockResolvedValueOnce(response({ timeout: true }))
-      .mockResolvedValueOnce(
-        response({ http_status: 401, request_error: log_error_from_message("认证失败") }),
-      )
-      .mockResolvedValueOnce(response({ response_error: log_error_from_message("截断") }))
-      .mockResolvedValueOnce(response({ cancelled: true }));
+      .mockResolvedValue(response());
     const { scheduler } = setup(request, "A", { concurrency_limit: 0, rpm_limit: 0 });
     const result = scheduler.request(body(), new AbortController().signal);
     await vi.advanceTimersByTimeAsync(0);
-    expect(scheduler.read_concurrency_limit()).toBe(4);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(scheduler.read_concurrency_limit()).toBe(4);
+    expect(scheduler.read_concurrency_limit()).toBe(2);
     await vi.advanceTimersByTimeAsync(60_000);
     await result;
-    expect(scheduler.read_concurrency_limit()).toBe(5);
-    await scheduler.request(body(), new AbortController().signal);
-    expect(scheduler.read_concurrency_limit()).toBe(5);
+    expect(scheduler.read_concurrency_limit()).toBe(3);
   });
 
   it("持续 429 按 60 秒周期退让至 1，冷却中取消立即结算且不再唤醒", async () => {
@@ -296,7 +315,7 @@ describe("RequestScheduler", () => {
         request_recovery: {
           phase: "waiting",
           retry_count: 0,
-          retry_limit: 10,
+          retry_limit: 5,
           retry_at: 240_000,
         },
       }),
@@ -331,12 +350,12 @@ describe("RequestScheduler", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("连续 10 次无响应后终止整批，任意 HTTP 响应会重置计数", async () => {
+  it("无响应计数在 HTTP 响应后重置，连续超时仍可恢复", async () => {
     let calls = 0;
     const request = vi.fn(async () => {
       calls += 1;
-      if (calls === 10) return failure();
-      if (calls <= 19) return response({ timeout: true });
+      if (calls === 5) return failure();
+      if (calls <= 9) return response({ timeout: true });
       return response();
     });
     const { scheduler, failures, state } = setup(request);
@@ -345,25 +364,25 @@ describe("RequestScheduler", () => {
     expect(await result).toMatchObject({
       response_result: "ok",
     });
-    expect(calls).toBe(20);
-    expect(failures).toHaveBeenCalledTimes(19);
+    expect(calls).toBe(10);
+    expect(failures).toHaveBeenCalledTimes(9);
     expect(state.mock.lastCall?.[0].request_recovery).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("连续无响应达到 10 次后以终止错误结束", async () => {
+  it("连续无响应达到上限后以终止错误结束", async () => {
     const request = vi.fn(async () => response({ timeout: true }));
     const { scheduler, failures } = setup(request);
     const result = scheduler
       .request(body(), new AbortController().signal)
       .catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(540_000);
+    await vi.advanceTimersByTimeAsync(240_000);
     expect(await result).toMatchObject({
       code: "model.provider_failed",
-      message: "连续无响应 10 次",
+      message: "连续无响应 5 次",
     });
-    expect(request).toHaveBeenCalledTimes(10);
-    expect(failures).toHaveBeenCalledTimes(10);
+    expect(request).toHaveBeenCalledTimes(5);
+    expect(failures).toHaveBeenCalledTimes(5);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -383,7 +402,7 @@ describe("RequestScheduler", () => {
         request_recovery: {
           phase: "waiting",
           retry_count: 1,
-          retry_limit: 10,
+          retry_limit: 5,
           retry_at: 60_000,
         },
       }),
@@ -433,7 +452,7 @@ describe("RequestScheduler", () => {
     expect(state.mock.lastCall?.[0].request_recovery).toEqual({
       phase: "waiting",
       retry_count: 0,
-      retry_limit: 10,
+      retry_limit: 5,
       retry_at: 60_000,
     });
     await vi.advanceTimersByTimeAsync(59_999);
@@ -443,7 +462,7 @@ describe("RequestScheduler", () => {
     expect(state.mock.lastCall?.[0].request_recovery).toEqual({
       phase: "retrying",
       retry_count: 0,
-      retry_limit: 10,
+      retry_limit: 5,
       attempt_timeout_seconds: 60,
     });
     probe.resolve(response());
@@ -477,7 +496,7 @@ describe("RequestScheduler", () => {
     expect(state.mock.lastCall?.[0].request_recovery).toEqual({
       phase: "retrying",
       retry_count: 0,
-      retry_limit: 10,
+      retry_limit: 5,
       attempt_timeout_seconds: 60,
     });
     active[2]!.resolve(response());

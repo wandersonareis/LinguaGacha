@@ -28,7 +28,12 @@ import type {
   LLMRequestResult,
 } from "../llm/llm-types";
 import { BatchTaskRuntime, BatchTaskCompletionError } from "../batch-task/batch-task-runtime";
-import { RequestRatePool, resolve_request_limits } from "../batch-task/request-rate";
+import {
+  BATCH_CONCURRENCY_INITIAL,
+  BATCH_CONCURRENCY_SUCCESS_STREAK,
+  RequestRatePool,
+  resolve_request_limits,
+} from "../batch-task/request-rate";
 import { RequestScheduler } from "../batch-task/request-scheduler";
 
 const BATCH_REQUEST_LOG_SOURCE = "batch-request";
@@ -226,7 +231,10 @@ export class BatchRequestService {
             model_name: String(model["name"] ?? ""),
             model_id: config.model_id,
             thinking_level: config.thinking_level,
-            concurrency_limit: limits.concurrency_limit,
+            // 自动模式从保守额度开始，快照展示实际启动并发而不是上限。
+            concurrency_limit: limits.auto_concurrency
+              ? BATCH_CONCURRENCY_INITIAL
+              : limits.concurrency_limit,
             rpm_limit: limits.rpm_limit,
           };
           await publish_json(path.join(directory, "manifest.json"), {
@@ -247,6 +255,8 @@ export class BatchRequestService {
             model,
             rate: this.rates.resolve(model),
             timeout_ms: read_request_timeout_ms(settings),
+            initial_concurrency: BATCH_CONCURRENCY_INITIAL,
+            concurrency_success_streak: BATCH_CONCURRENCY_SUCCESS_STREAK,
             dispatch: async ({ id, payload }, key, request_signal) => {
               const received = await this.client.request(
                 {

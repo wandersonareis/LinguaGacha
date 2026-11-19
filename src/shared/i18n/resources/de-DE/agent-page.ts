@@ -17,6 +17,7 @@ export const de_de_agent_page = {
     media_description:
       "Modell für Audio- und Videoerkennung. Das Hauptmodell entscheidet, wann es eingesetzt wird.\n<emphasis>Bitte beachten Sie, dass die meisten Modelle keine Audio- und Videoeingaben unterstützen. Empfohlen werden gemini und doubao-seed-lite.</emphasis>",
     follow: "Hauptmodell folgen",
+    follow_translation: "Übersetzungsmodell folgen",
   },
   title: "AGENT",
   thinking: "Denkprozess",

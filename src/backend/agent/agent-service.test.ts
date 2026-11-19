@@ -4254,7 +4254,7 @@ describe("AgentService", () => {
     expect(execution.config_snapshot["model_selection"]).toMatchObject({ agent_media: id });
   });
 
-  it.each([null, "next"])("批量翻译按保存偏好 %s 直接执行并跟随下一轮主模型", async (model_id) => {
+  it.each([null, "next"])("批量翻译按保存偏好 %s 直接执行，未指定时沿用翻译模型", async (model_id) => {
     fake_agent_state.batch_mode = true;
     const run = vi.fn<
       import("../batch-translation/batch-translation-service").BatchTranslationService["run_under_agent"]
@@ -4285,7 +4285,10 @@ describe("AgentService", () => {
     await service.send_message({ text: "继续翻译", attachments: [] });
     await wait_for_idle(service);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls.at(-1)?.[2]).toMatchObject({ id: "next" });
+    // 未指定批量模型时始终跟随翻译模型，不再随主控模型切换。
+    expect(run.mock.calls.at(-1)?.[2]).toMatchObject(
+      model_id === null ? { id: "active" } : { id: "next" },
+    );
   });
 
   it("跟随批量调用默认降到最低可用等级", async () => {

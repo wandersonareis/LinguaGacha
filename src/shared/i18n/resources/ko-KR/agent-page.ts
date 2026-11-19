@@ -18,6 +18,7 @@ export const ko_kr_agent_page = {
     media_description:
       "오디오 및 비디오 인식에 사용하는 모델입니다. 주 모델이 사용 시점을 판단합니다.\n<emphasis>대부분의 모델은 오디오 및 비디오 입력을 지원하지 않는다는 점에 유의하세요. gemini와 doubao-seed-lite를 권장합니다.</emphasis>",
     follow: "주 모델 따르기",
+    follow_translation: "번역 모델 따르기",
   },
   title: "AGENT",
   thinking: "생각 과정",

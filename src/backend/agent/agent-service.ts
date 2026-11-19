@@ -1051,6 +1051,7 @@ export class AgentService {
   }
   /** 产品工具复用后端服务与当前租约，统一经过错误和参数边界。 */
   private create_tools() {
+    let batch_translation_model: Model | null = null; // 当前调用实际使用的模型，回执用于定位配置来源。
     return [
       create_agent_batch_llm_request_tool(async (input, signal) => {
         const execution = this.require_execution();
@@ -1087,41 +1088,49 @@ export class AgentService {
           throw error;
         }
       }),
-      create_agent_batch_item_translation_tool(async (request, thinking_downgrade, signal) => {
-        const execution = this.require_execution();
-        // 用户停止后本轮不再启动翻译，明确拒绝以免把上次运行的事实当作本次结果。
-        if (execution.batchStopped)
-          throw new AgentToolError({ code: "batch_translation.stopped", stop_source: "user" });
-        this.session_state.require_loaded_project_path();
-        signal.throwIfAborted();
-        this.runtime_gate.assert_current_runtime(execution.lease, "agent");
-        const model = resolve_agent_batch_model(
-          this.settings.read_setting(),
-          this.model_config!,
-          "batch_translation",
-          this.catalog.read_models(),
-          thinking_downgrade,
-        );
-        try {
-          const result = await this.batch_translation.run_under_agent(
-            execution.lease,
-            signal,
-            model,
-            request,
+      create_agent_batch_item_translation_tool(
+        async (request, thinking_downgrade, signal) => {
+          batch_translation_model = null;
+          const execution = this.require_execution();
+          // 用户停止后本轮不再启动翻译，明确拒绝以免把上次运行的事实当作本次结果。
+          if (execution.batchStopped)
+            throw new AgentToolError({ code: "batch_translation.stopped", stop_source: "user" });
+          this.session_state.require_loaded_project_path();
+          signal.throwIfAborted();
+          this.runtime_gate.assert_current_runtime(execution.lease, "agent");
+          const model = resolve_agent_batch_model(
+            this.settings.read_setting(),
+            this.model_config!,
+            "batch_translation",
+            this.catalog.read_models(),
+            thinking_downgrade,
           );
-          if (this.execution === execution && result.stop_source === "user")
-            execution.batchStopped = true;
-          return result;
-        } catch (error) {
-          if (
-            error instanceof BatchTranslationCompletionError &&
-            this.execution === execution &&
-            error.result.stop_source === "user"
-          )
-            execution.batchStopped = true;
-          throw error;
-        }
-      }),
+          batch_translation_model = model;
+          try {
+            const result = await this.batch_translation.run_under_agent(
+              execution.lease,
+              signal,
+              model,
+              request,
+            );
+            if (this.execution === execution && result.stop_source === "user")
+              execution.batchStopped = true;
+            return result;
+          } catch (error) {
+            if (
+              error instanceof BatchTranslationCompletionError &&
+              this.execution === execution &&
+              error.result.stop_source === "user"
+            )
+              execution.batchStopped = true;
+            throw error;
+          }
+        },
+        () => {
+          const model = batch_translation_model;
+          return model === null ? null : { name: model.name, model_id: model.model_id };
+        },
+      ),
       create_agent_ask_user_tool({
         wait_for_answer: (id, question, signal) =>
           this.decisions.wait_for_question(id, question, signal),

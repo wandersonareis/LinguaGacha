@@ -721,7 +721,7 @@ describe("BatchTranslationRunner", () => {
         expect((await runtime.build_snapshot()).request_recovery).toMatchObject({
           phase: "waiting",
           retry_count: expect.any(Number),
-          retry_limit: 10,
+          retry_limit: 5,
         });
         if (action === "recover") {
           recovered = true;

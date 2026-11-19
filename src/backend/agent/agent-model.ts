@@ -28,7 +28,7 @@ const AGENT_MODEL_SELECTION_KEYS = {
   media: "agent_media",
 } as const;
 
-/** 主控使用生效配置。固定用途读取保存配置。副本隔离嵌套请求参数。 */
+/** 主控使用生效配置。固定用途读取保存配置；批量翻译跟随翻译模型。副本隔离嵌套请求参数。 */
 export function resolve_agent_model(
   config: JsonRecord,
   agent_model: Model,
@@ -38,7 +38,16 @@ export function resolve_agent_model(
   const model_id = normalize_model_selection(config["model_selection"])[
     AGENT_MODEL_SELECTION_KEYS[usage]
   ];
-  if (model_id === null) return Model.from_json(agent_model.to_json(), agent_model.id);
+  if (model_id === null) {
+    // 批量翻译与普通翻译共用同一模型；媒体等固定用途继续跟随主控模型。
+    const fallback =
+      usage === "batch_translation"
+        ? resolve_model_for_usage(config, "translation")
+        : agent_model.to_json();
+    return fallback === null
+      ? Model.from_json(agent_model.to_json(), agent_model.id)
+      : Model.from_json(structuredClone(fallback), String(fallback["id"] ?? ""));
+  }
   const raw = read_config_model_records(config).find((item) => item["id"] === model_id);
   if (raw === undefined) return null;
   return Model.from_json(structuredClone(raw), model_id);

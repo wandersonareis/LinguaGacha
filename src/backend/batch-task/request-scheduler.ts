@@ -6,6 +6,7 @@ import type { LLMRequestFacts } from "../llm/llm-types";
 import type { JsonValue } from "../../domain/json";
 import type { BatchTaskRequestRecovery, BatchTaskRequestState } from "../../domain/batch-task";
 import {
+  AUTO_CONCURRENCY_INITIAL,
   AUTO_CONCURRENCY_MIN,
   AUTO_CONCURRENCY_MAX,
   resolve_request_limits,
@@ -13,7 +14,9 @@ import {
 } from "./request-rate";
 
 /** 连续没有 HTTP 响应的请求达到该次数后结束任务，任一响应会清零。 */
-export const RETRY_LIMIT = 10;
+export const RETRY_LIMIT = 5;
+/** 单个逻辑请求累计无响应的总预算；达到后不再等待已配置的单次时限。 */
+export const NO_RESPONSE_BUDGET_MS = 10 * 60_000;
 const RETRY_CYCLE_MS = 60_000; // 密钥冷却周期，与单次请求时限无关。
 const HTTP_TOO_MANY_REQUESTS = 429;
 
@@ -39,12 +42,15 @@ interface PendingRequest<Input, Result extends LLMRequestFacts> {
     usage_complete: boolean;
   }; // 随逻辑请求跨密钥累计。
   failures: number; // 连续没有取得 HTTP 响应的失败次数，任一响应清零。
+  no_response_since: number | null; // 本轮连续无响应的起点，达到总预算后结束逻辑请求。
   retrying: boolean; // 逻辑请求已经失败过，后续派发沿用恢复节奏。
 }
 
 interface SchedulerOptions<Input, Result extends LLMRequestFacts> {
   model: JsonValue;
   timeout_ms: number; // 使用调用方配置的请求时限；每轮派发不再覆盖生成时限。
+  initial_concurrency?: number; // 自动模式的启动额度；批量工具用更保守的值。
+  concurrency_success_streak?: number; // 自动模式连续成功多少次才升一档。
   dispatch: (input: Input, key: string, signal: AbortSignal) => Promise<Result>;
   fail_batch?: (result: Result) => boolean; // 不可恢复的单项错误可交还业务层，缺省保持整批终止。
   on_attempt?: (result: Result) => void; // 每次物理回执只结算一次，包含重试和终止前的已知用量。
@@ -64,8 +70,10 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
   private offset = 0; // 下次轮换扫描密钥的起点。
   private in_flight = 0; // 全模型实际并发；密钥内计数另用于故障收束。
   private readonly auto_concurrency: boolean; // 本轮配置快照决定是否允许升降档。
+  private readonly concurrency_success_streak: number; // 升档前需要的连续成功次数。
   private concurrency_limit: number; // 本轮唯一并发额度，流水线只读取。
-  private concurrency_version = 0; // 每次有效 429 更新，隔离降档前的成功与同波故障。
+  private concurrency_version = 0; // 每次有效降档更新，隔离降档前的成功与同波故障。
+  private success_streak = 0; // 当前额度版本的连续成功次数，失败或超时清零。
   private timer: ReturnType<typeof setTimeout> | null = null; // 速率等待与密钥冷却共用一个唤醒点。
 
   /** 每轮按唯一密钥建立恢复状态；速率时钟由外部跨轮复用。 */
@@ -73,7 +81,13 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
     const model = read_json_record(options.model);
     const limits = resolve_request_limits(model);
     this.auto_concurrency = limits.auto_concurrency;
-    this.concurrency_limit = limits.concurrency_limit;
+    this.concurrency_success_streak = Math.max(1, options.concurrency_success_streak ?? 1);
+    this.concurrency_limit = limits.auto_concurrency
+      ? Math.min(
+          AUTO_CONCURRENCY_MAX,
+          Math.max(AUTO_CONCURRENCY_MIN, options.initial_concurrency ?? AUTO_CONCURRENCY_INITIAL),
+        )
+      : limits.concurrency_limit;
     options.rate.set_rps_limit(this.concurrency_limit);
     this.keys = [
       ...new Set(
@@ -106,6 +120,7 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
         reject,
         usage: { input_tokens: 0, reasoning_tokens: 0, output_tokens: 0, usage_complete: true },
         failures: 0,
+        no_response_since: null,
         retrying: false,
         abort: () => {
           const index = this.queue.indexOf(pending);
@@ -262,7 +277,13 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
         const no_response =
           result.timeout === true ||
           (result.request_error !== undefined && result.http_status === undefined);
-        pending.failures = no_response ? pending.failures + 1 : 0;
+        if (no_response) {
+          pending.failures += 1;
+          pending.no_response_since ??= Date.now();
+        } else {
+          pending.failures = 0;
+          pending.no_response_since = null;
+        }
         pending.retrying = true;
         if (result.retryable === false) {
           if (this.options.fail_batch?.(result) === false) {
@@ -278,15 +299,20 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
             failure,
           });
         }
-        if (pending.failures >= RETRY_LIMIT) {
+        const stalled_ms =
+          pending.no_response_since === null ? 0 : Date.now() - pending.no_response_since;
+        if (pending.failures >= RETRY_LIMIT || stalled_ms >= NO_RESPONSE_BUDGET_MS) {
           throw create_provider_error(
             this.options.retry_exhausted_message(pending.failures),
             undefined,
             { retryable: false, failure },
           );
         }
-        if (result.http_status === HTTP_TOO_MANY_REQUESTS) {
+        // 超时和限流都说明当前并发超过提供方承受能力，立即退让而不是继续堆积。
+        if (result.timeout === true || result.http_status === HTTP_TOO_MANY_REQUESTS) {
           this.adjust_concurrency(version, false);
+        }
+        if (result.http_status === HTTP_TOO_MANY_REQUESTS) {
           const delay = Math.min(result.retry_after_ms ?? 0, this.options.timeout_ms);
           key.available_at = Math.max(
             key.available_at,
@@ -297,6 +323,7 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
       } else {
         this.adjust_concurrency(version, true);
         pending.failures = 0;
+        pending.no_response_since = null;
         pending.retrying = false;
         key.failed = false;
         key.available_at = 0;
@@ -331,8 +358,13 @@ export class RequestScheduler<Input, Result extends LLMRequestFacts> {
   private adjust_concurrency(version: number, success: boolean): void {
     if (!this.auto_concurrency || version !== this.concurrency_version) return;
     if (success) {
+      // 连续成功达到门槛才升一档，避免单个快速响应立刻放大并发。
+      this.success_streak += 1;
+      if (this.success_streak < this.concurrency_success_streak) return;
+      this.success_streak = 0;
       this.concurrency_limit = Math.min(AUTO_CONCURRENCY_MAX, this.concurrency_limit + 1);
     } else {
+      this.success_streak = 0;
       this.concurrency_limit = Math.max(
         AUTO_CONCURRENCY_MIN,
         Math.floor(this.concurrency_limit / 2),

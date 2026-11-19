@@ -19,6 +19,7 @@ export const ja_jp_agent_page = {
     media_description:
       "音声・動画認識に使用するモデル。使用するタイミングはメインモデルが判断します。\n<emphasis>多くのモデルは音声・動画入力に対応していない点にご注意ください。gemini と doubao-seed-lite を推奨します。</emphasis>",
     follow: "メインモデルに従う",
+    follow_translation: "翻訳モデルに従う",
   },
   title: "AGENT",
   thinking: "思考過程",

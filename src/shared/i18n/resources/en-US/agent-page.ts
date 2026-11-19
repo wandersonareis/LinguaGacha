@@ -17,6 +17,7 @@ export const en_us_agent_page = {
     media_description:
       "Model used for audio and video recognition. The main model decides when to use it.\n<emphasis>Please note that most models do not support audio and video input. gemini and doubao-seed-lite are recommended.</emphasis>",
     follow: "Follow main model",
+    follow_translation: "Follow translation model",
   },
   title: "AGENT",
   thinking: "Thinking",

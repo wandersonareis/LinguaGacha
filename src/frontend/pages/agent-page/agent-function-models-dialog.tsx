@@ -105,10 +105,12 @@ function FunctionModelMenu(props: {
   if (disabled && open) set_open(false);
   const id = props.controller.snapshot.model_selection[props.target];
   const model = props.controller.snapshot.models.find((item) => item.id === id);
+  const follow_label =
+    props.target === "agent_batch_translation"
+      ? t("agent_page.function_models.follow_translation")
+      : t("agent_page.function_models.follow");
   const name =
-    id === null
-      ? t("agent_page.function_models.follow")
-      : model?.name || model?.id || t("app.model.selection.unavailable");
+    id === null ? follow_label : model?.name || model?.id || t("app.model.selection.unavailable");
   const FollowIcon = id === null ? CircleCheck : Circle;
   return (
     <AppDropdownMenu open={open} onOpenChange={set_open}>
@@ -140,7 +142,7 @@ function FunctionModelMenu(props: {
               }}
             >
               <FollowIcon aria-hidden="true" />
-              {t("agent_page.function_models.follow")}
+              {follow_label}
             </AppDropdownMenuItem>
             <AppDropdownMenuSeparator />
           </>
