@@ -1,5 +1,5 @@
 import { api_fetch } from "@frontend/app/desktop/desktop-api";
-import { extract_file_name } from "@frontend/app/desktop/path";
+import { extract_project_display_name } from "@frontend/app/desktop/path";
 import { run_modal_progress_toast } from "@frontend/app/feedback/desktop-toast";
 import { useDesktopState } from "@frontend/app/state/use-desktop-state";
 
@@ -25,7 +25,7 @@ export function useProjectLoad(): RunProjectLoad {
         await refresh_project_snapshot();
         await api_fetch("/api/settings/recent-projects/add", {
           path,
-          name: extract_file_name(path).replace(/\.[^.]+$/u, ""),
+          name: extract_project_display_name(path),
         });
         await Promise.all([refresh_settings(), refresh_batch_translation()]);
         await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));

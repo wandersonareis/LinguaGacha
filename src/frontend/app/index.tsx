@@ -41,6 +41,7 @@ import {
   useDesktopState,
   useBatchTranslationSnapshot,
 } from "@frontend/app/state/use-desktop-state";
+import { extract_project_display_name } from "@frontend/app/desktop/path";
 import { DesktopProgressToast } from "@frontend/app/feedback/desktop-progress-toast";
 import { AgentAttention } from "@frontend/app/feedback/agent-attention";
 import "@frontend/app/shell/app-shell.css";
@@ -52,7 +53,7 @@ import { Toaster } from "@frontend/shadcn/sonner";
 import { TooltipProvider } from "@frontend/shadcn/tooltip";
 import { UpdateDialog } from "@frontend/app/shell/update-dialog";
 import { AppSidebar } from "@frontend/app/shell/app-sidebar";
-import { AppTitlebar } from "@frontend/app/shell/app-titlebar";
+import { AppTitlebar, format_version_label } from "@frontend/app/shell/app-titlebar";
 import { useAppSidebar } from "@frontend/app/shell/use-app-sidebar";
 import { AppConfirmDialog } from "@frontend/widgets/app-alert-dialog";
 import { LogWindowPage } from "@frontend/pages/log-window-page/page";
@@ -116,6 +117,10 @@ function AppContent(): JSX.Element {
   const active_screen = SCREEN_REGISTRY[selected_route];
   const ScreenComponent = active_screen.component;
   const app_title = t("app.metadata.app_name");
+  const version_label = format_version_label(app_version);
+  const project_name = project_snapshot.loaded
+    ? extract_project_display_name(project_snapshot.path)
+    : null;
   const update_release = read_update_release(update_dialog_state);
   const update_release_url = update_release?.release_url ?? null;
 
@@ -137,8 +142,10 @@ function AppContent(): JSX.Element {
   }, [app_version]);
 
   useEffect(() => {
-    document.title = app_title;
-  }, [app_title]);
+    document.title = `${app_title} ${version_label}${
+      project_name === null ? "" : ` - ${project_name}`
+    }`;
+  }, [app_title, version_label, project_name]);
 
   useEffect(() => {
     return window.desktopApp.onWindowCloseRequest(() => {
@@ -423,7 +430,7 @@ function AppContent(): JSX.Element {
             } as CSSProperties
           }
         >
-          <AppTitlebar title={app_title} />
+          <AppTitlebar title={app_title} project_name={project_name} />
           <section className="shell-body">
             <AppSidebar
               groups={NAVIGATION_GROUPS}

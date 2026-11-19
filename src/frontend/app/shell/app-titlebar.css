@@ -79,4 +79,14 @@
 .topbar__brand strong {
   font-size: var(--ui-font-size-14);
   color: var(--foreground);
+  min-width: 0;
+}
+
+.topbar__project {
+  display: inline-block;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }

@@ -11,14 +11,19 @@ import "@frontend/app/shell/app-titlebar.css";
 
 type AppTitlebarProps = {
   title: string;
+  project_name?: string | null;
 };
+
+/** 宿主版本统一带一个 v 前缀供标题展示。 */
+export function format_version_label(version: string): string {
+  return /^v/iu.test(version) ? version : `v${version}`;
+}
 
 /** 标题栏共享侧栏切换入口。启动时展示操作提示，后续开关由 `Tooltip` 管理。 */
 export function AppTitlebar(props: AppTitlebarProps): JSX.Element {
   const { t } = useI18n();
   const { state, toggleSidebar } = useSidebar();
-  const version = window.desktopApp.appVersion;
-  const version_label = /^v/iu.test(version) ? version : `v${version}`;
+  const version_label = format_version_label(window.desktopApp.appVersion);
   const shell_info = window.desktopApp.shell; // 标题栏安全区统一来自 preload 暴露的桌面壳层信息，避免渲染层再猜平台细节
   const SidebarToggleIcon = state === "expanded" ? PanelLeftClose : PanelLeftOpen;
   const toggle_label = t(
@@ -63,6 +68,9 @@ export function AppTitlebar(props: AppTitlebarProps): JSX.Element {
           <div className="topbar__brand">
             <strong className="font-medium">
               {props.title} {version_label}
+              {props.project_name ? (
+                <span className="topbar__project"> - {props.project_name}</span>
+              ) : null}
             </strong>
           </div>
         </div>

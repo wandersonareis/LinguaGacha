@@ -34,7 +34,7 @@ describe("AppTitlebar", () => {
   });
 
   /** 使用真实侧栏状态验证标题栏，重复注册快捷键会导致切换断言失败。 */
-  async function render_titlebar(): Promise<HTMLButtonElement> {
+  async function render_titlebar(project_name?: string): Promise<HTMLButtonElement> {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -43,7 +43,7 @@ describe("AppTitlebar", () => {
         <LocaleProvider locale="zh-CN">
           <TooltipProvider delay={0}>
             <SidebarProvider>
-              <AppTitlebar title="LinguaGacha" />
+              <AppTitlebar title="LinguaGacha" project_name={project_name ?? null} />
             </SidebarProvider>
           </TooltipProvider>
         </LocaleProvider>,
@@ -58,6 +58,26 @@ describe("AppTitlebar", () => {
     Object.defineProperty(window, "desktopApp", {
       configurable: true,
       value: create_desktop_bridge_api_mock({ appVersion: version }),
+    });
+    await render_titlebar();
+
+    expect(container?.querySelector("strong")?.textContent).toBe("LinguaGacha v1.2.3");
+  });
+
+  it("工程名跟在版本之后并用连字符分隔", async () => {
+    Object.defineProperty(window, "desktopApp", {
+      configurable: true,
+      value: create_desktop_bridge_api_mock({ appVersion: "1.2.3" }),
+    });
+    await render_titlebar("demo");
+
+    expect(container?.querySelector("strong")?.textContent).toBe("LinguaGacha v1.2.3 - demo");
+  });
+
+  it("没有工程时不展示连字符", async () => {
+    Object.defineProperty(window, "desktopApp", {
+      configurable: true,
+      value: create_desktop_bridge_api_mock({ appVersion: "1.2.3" }),
     });
     await render_titlebar();
 

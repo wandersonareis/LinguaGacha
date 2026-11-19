@@ -3,6 +3,11 @@ export function extract_file_name(file_path: string): string {
   return file_path.split(/[\\/]+/u).findLast((segment) => segment !== "") ?? file_path;
 }
 
+/** 返回用于展示的工程名：去掉路径和扩展名，例如 E:/games/demo.lg -> demo。 */
+export function extract_project_display_name(file_path: string): string {
+  return extract_file_name(file_path).replace(/\.[^.]+$/u, "");
+}
+
 /** 返回文件所在目录，保留根目录和盘符。 */
 export function extract_parent_dir(file_path: string): string {
   const index = Math.max(file_path.lastIndexOf("/"), file_path.lastIndexOf("\\"));

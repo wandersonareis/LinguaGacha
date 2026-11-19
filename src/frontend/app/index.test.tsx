@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { usePageLeave } from "./navigation/page-leave-context";
 import App from "./index";
 
-const mocks = vi.hoisted(() => ({ save: vi.fn<() => Promise<boolean>>() }));
+const mocks = vi.hoisted(() => ({
+  save: vi.fn<() => Promise<boolean>>(),
+  project_snapshot: { loaded: false, path: "" } as { loaded: boolean; path: string },
+}));
 
 // 隔离启动网络和项目加载，保留真实更新状态、语言及页面保存流程。
 vi.mock("./desktop/desktop-api", () => ({
@@ -21,7 +24,7 @@ vi.mock("./state/desktop-state-provider", () => ({
 vi.mock("./state/use-desktop-state", () => ({
   useDesktopState: () => ({
     initial_state_status: "loading",
-    project_snapshot: { loaded: false, path: "" },
+    project_snapshot: mocks.project_snapshot,
     project_session_status: "idle",
     settings_snapshot: { app_language: "ZH" },
   }),
@@ -39,7 +42,10 @@ vi.mock("./appearance/appearance-context", () => ({
   useAppearance: () => ({ resolved_theme: "light" }),
 }));
 vi.mock("./shell/app-sidebar", () => ({ AppSidebar: () => null }));
-vi.mock("./shell/app-titlebar", () => ({ AppTitlebar: () => null }));
+vi.mock("./shell/app-titlebar", () => ({
+  AppTitlebar: () => null,
+  format_version_label: (version: string) => (/^v/iu.test(version) ? version : `v${version}`),
+}));
 vi.mock("@frontend/shadcn/sidebar", () => ({
   SidebarProvider: ({ children }: PropsWithChildren) => children,
   SidebarInset: ({ children }: PropsWithChildren) => children,
@@ -105,6 +111,38 @@ describe("应用更新入口", () => {
         latest_version: "1.2.4",
         zip_path: "update.zip",
       });
+    } finally {
+      await act(async () => root.unmount());
+      if (descriptor) Object.defineProperty(window, "desktopApp", descriptor);
+      else Reflect.deleteProperty(window, "desktopApp");
+    }
+  });
+});
+
+describe("窗口标题", () => {
+  it.each([
+    { snapshot: { loaded: false, path: "" }, expected: "LinguaGacha v1.2.3" },
+    {
+      snapshot: { loaded: true, path: "E:/games/demo.lg" },
+      expected: "LinguaGacha v1.2.3 - demo",
+    },
+  ])("按工程加载状态展示 $expected", async ({ snapshot, expected }) => {
+    mocks.project_snapshot = snapshot;
+    const descriptor = Object.getOwnPropertyDescriptor(window, "desktopApp");
+    Object.defineProperty(window, "desktopApp", {
+      configurable: true,
+      value: {
+        appVersion: "1.2.3",
+        shell: {},
+        onWindowCloseRequest: () => () => {},
+        reportRendererDiagnostics: () => {},
+      },
+    });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<App />));
+      expect(document.title).toBe(expected);
     } finally {
       await act(async () => root.unmount());
       if (descriptor) Object.defineProperty(window, "desktopApp", descriptor);
