@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type {
   CommitPublication,
   ConversationRecord,
@@ -9,7 +9,7 @@ import type {
   TaskRecord,
   UsageState,
 } from "@earendil-works/pi-durable";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { AgentEntry, AgentUsageSnapshot } from "../../shared/agent";
 import { JsonTool } from "../../shared/utils/json-tool";
 import {
@@ -25,6 +25,16 @@ export const assistant_entry_id = (task: number | undefined, entry: number): str
   `assistant:${task ?? `entry:${entry}`}`;
 const UNCOMMITTED_ENTRY_ORDER = Number.MAX_SAFE_INTEGER; // 尚无 SDK 条目身份的正文暂居轮次末尾
 
+// 历史可来自导入工程；公开图片响应只接受光栅 MIME，避免把活动文档作为图片下发。
+const TOOL_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "image/bmp",
+]);
+
 type TaskRecordValue = TaskRecord<JsonValue, JsonValue, JsonValue>;
 type Row = { order: number; entry: AgentEntry };
 export type AgentTimelineChange = { replace: boolean; entries: AgentEntry[] };
@@ -35,7 +45,7 @@ export class AgentChatView {
   public readonly conversations = new Map<number, ConversationRecord>(); // 分支继承关系，用于计算祖先切点
   public readonly submissions = new Map<number, SubmissionRecord>(); // 产品输入与实际历史条目的关联回执
   public readonly compactions = new Map<number, TaskRecordValue>(); // 公开压缩条目的任务事实
-  public readonly live = new Map<number, LiveState>(); // 按分支保存的已提交生成进度
+  public live: Readonly<LiveState> = {}; // 活动分支的内存进度，落盘回执不覆盖它。
   public readonly pendingUsages = new Map<number, UsageState>(); // 结算后释放的用量回执
   public usage: AgentUsageSnapshot = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   private conversationId: number | undefined;
@@ -44,6 +54,7 @@ export class AgentChatView {
   private readonly rows = new Map<string, Row>();
   private readonly inputSubmissions = new Map<number, SubmissionRecord>(); // 旧历史通过条目身份定位原提交回执
   private readonly calls = new Map<string, string>(); // 工具调用身份到公开条目的查询索引
+  private readonly toolImages = new Map<string, readonly Readonly<ImageContent>[]>(); // 已提交工具回执的可见图片索引
   private readonly userRecords = new Map<string, EntryRecord>(); // 轮次状态变化时定位原用户消息
   private readonly changed = new Map<string, AgentEntry>(); // 尚未发布的条目，同一身份只保留最新值
   private readonly pendingRecords = new Set<number>();
@@ -107,23 +118,28 @@ export class AgentChatView {
         this.pendingTasks.add(change.value.id);
       } else if (
         change.type === "document" &&
-        change.value !== null &&
-        change.conversationId !== undefined
+        change.kind === "change" &&
+        change.conversationId !== undefined &&
+        change.record.kind === "pi.usage"
       ) {
-        if (change.record.kind === "pi.live") {
-          this.live.set(change.conversationId, change.value as LiveState);
-          if (change.conversationId === this.conversationId) this.liveChanged = true;
-        }
-        if (change.record.kind === "pi.usage") {
-          this.pendingUsages.set(change.conversationId, change.value as UsageState);
-        }
+        this.pendingUsages.set(change.conversationId, change.value as UsageState);
       }
     }
   }
 
+  /** 标记流式条目，下一次刷新与正式回执一起发布。 */
+  public update_live(live: Readonly<LiveState>): void {
+    this.live = live;
+    this.liveChanged = true;
+  }
+
   /** 分支切换或补读历史时重建索引，其余提交增量更新。 */
-  public refresh(conversationId: number, state: Readonly<AgentChatData>, restored = false): void {
-    if (restored || conversationId !== this.conversationId) {
+  public refresh(
+    conversationId: number,
+    state: Readonly<AgentChatData>,
+    mode?: "restore" | "stopping",
+  ): void {
+    if (mode === "restore" || conversationId !== this.conversationId) {
       this.conversationId = conversationId;
       this.bounds.clear();
       let record = this.conversations.get(conversationId);
@@ -138,7 +154,7 @@ export class AgentChatView {
         this.branch_records(),
         this.submissions,
         [...this.compactions.values()].filter((task) => this.visible(task.conversationId, task.id)),
-        this.live.get(conversationId) ?? {},
+        this.live,
         state,
       );
     } else {
@@ -176,7 +192,7 @@ export class AgentChatView {
         if (this.visible(task.conversationId, id)) this.read_task(task);
       }
       if (this.liveChanged || previous.rounds !== state.rounds)
-        this.read_live(this.live.get(conversationId) ?? {});
+        this.read_live(this.live, mode === "stopping");
     }
     for (const [id, state] of this.pendingUsages) {
       const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -209,6 +225,7 @@ export class AgentChatView {
     this.rows.clear();
     this.inputSubmissions.clear();
     this.calls.clear();
+    this.toolImages.clear();
     this.userRecords.clear();
     this.changed.clear();
     this.order = [];
@@ -241,6 +258,11 @@ export class AgentChatView {
   /** 按工具调用身份查找公开条目，投影尚未处理该调用时返回 `undefined`。 */
   public tool_entry_id(callId: string): string | undefined {
     return this.calls.get(callId);
+  }
+
+  /** 读取当前公开分支上工具条目的可见图片，分支切换或无图时返回 `undefined`。 */
+  public read_tool_image(entry_id: string, index: number): Readonly<ImageContent> | undefined {
+    return this.toolImages.get(entry_id)?.[index];
   }
 
   /** 发布者消费更新，不需要比较上一份完整快照。 */
@@ -354,6 +376,7 @@ export class AgentChatView {
         for (const call of read_agent_tool_calls(message)) {
           const id = `tool:${record.id}:${call.id}`;
           this.calls.set(call.id, id);
+          this.toolImages.delete(id);
           this.put(
             {
               kind: "tool_call",
@@ -362,7 +385,9 @@ export class AgentChatView {
               input: JsonTool.stringifyStrict(call.arguments),
               status: "running",
               output: null,
+              imageCount: 0,
               createdAt: message.timestamp,
+              endedAt: null,
             },
             record.id,
           );
@@ -371,11 +396,21 @@ export class AgentChatView {
         const id = this.calls.get(message.toolCallId);
         const row = id === undefined ? undefined : this.rows.get(id);
         if (row?.entry.kind !== "tool_call") continue;
+        const images = message.content.filter(
+          (part): part is ImageContent =>
+            part.type === "image" &&
+            part.data.length > 0 &&
+            TOOL_IMAGE_MIME_TYPES.has(part.mimeType),
+        );
+        if (images.length > 0) this.toolImages.set(row.entry.id, images);
+        else this.toolImages.delete(row.entry.id);
         this.put(
           {
             ...row.entry,
             status: read_agent_tool_result_status(record, message),
+            endedAt: message.timestamp,
             output: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+            imageCount: images.length,
           },
           row.order,
         );
@@ -400,7 +435,9 @@ export class AgentChatView {
   }
 
   /** 流式正文沿用任务身份，正式条目以 SDK 排序身份接替临时位置。 */
-  private read_live(live: Readonly<LiveState>): void {
+  private read_live(live: Readonly<LiveState>, stopping = false): void {
+    // 停止后冻结临时正文，SDK 最终回执仍可替换或撤回该条目。
+    if (stopping && live.generation !== undefined) return;
     const message = live.generation?.message as AssistantMessage | undefined;
     const parts = message === undefined ? null : project_assistant_message_parts(message);
     const nextId =

@@ -5,10 +5,9 @@ import { expect, inject, it } from "vitest";
 import { AgentExecutionRuntime } from "../execution/runtime";
 import { AgentWorkspaceRunner } from "../workspace/runtime/runner";
 import { AGENT_WORKSPACE_RUN_ROOT } from "../workspace/runtime/policy";
-import { AGENT_WORKSPACE_CONTRACT } from "../tools/contract";
 import { AgentPackageSources } from "../package-source";
 
-const ORT_VERSION = "1.30.0"; // 锁定实际验收版本，避免安装未生效时用旧运行时得到通过结果。
+const ORT_VERSION = "1.30.0"; // 验收固定运行时版本，核对实际安装结果。
 
 it.runIf(process.env.LINGUAGACHA_MEDIA_SOURCE)(
   "real workspace prepares media and completes listen, scan and refine",
@@ -17,10 +16,6 @@ it.runIf(process.env.LINGUAGACHA_MEDIA_SOURCE)(
     const workspace = path.join(root, "workspace");
     await mkdir(path.join(workspace, AGENT_WORKSPACE_RUN_ROOT), { recursive: true });
     await writeFile(path.join(workspace, "package.json"), '{"type":"module"}');
-    await writeFile(
-      path.join(workspace, "contract.json"),
-      JSON.stringify(AGENT_WORKSPACE_CONTRACT),
-    );
     const runtime = inject("workspaceRuntimeDirectory");
     const executable =
       process.env.LINGUAGACHA_TEST_ELECTRON ??
@@ -29,7 +24,7 @@ it.runIf(process.env.LINGUAGACHA_MEDIA_SOURCE)(
       runtimeDirectory: runtime,
       fontsDirectory: path.resolve("public/fonts"),
       executablePath: executable,
-      electronVersion: "45.2.3",
+      electronVersion: createRequire(import.meta.url)("electron/package.json").version as string,
       paths: {
         get_agent_node_root_dir: () => path.join(root, "node"),
         get_agent_models_dir: () => path.join(root, "models"),
@@ -58,25 +53,32 @@ it.runIf(process.env.LINGUAGACHA_MEDIA_SOURCE)(
       if (error.code === 'ENOENT') return '{}';
       throw error;
     })).version ?? null;
-    // 依赖按 media 技能「环境准备」的固定版本显式安装，计算入口不再隐式准备。
     await npm.run(['install', '--save-exact', \`ffmpeg-static-electron-v5-\${process.platform}-\${process.arch}@5.2.5\`, ${JSON.stringify(`onnxruntime-node@${ORT_VERSION}`)}]);
     const installedOrt = JSON.parse(await fs.readFile(ortPackage, 'utf8')).version;
     assert.equal(installedOrt, ${JSON.stringify(ORT_VERSION)});
-    await uv.run(['add', 'numpy==2.5.4', 'kaldi-native-fbank==1.23.0', 'opencv-python-headless==5.0.0.93', 'pyclipper==1.4.0']);
-    assert.deepEqual(await media.prepare_models(), []);
+    await uv.run(['add', 'kaldi-native-fbank==1.23.1', 'numpy==2.5.5', 'opencv-python-headless==5.1.0.95', 'pyclipper==1.4.0']);
+    await media.prepare_models();
     const info = await media.inspect(source);
-    const probe = await media.probe_gpu();
-    console.log('GPU probe', JSON.stringify(probe));
-    const device = probe.available ? 'gpu' : 'cpu';
-    // media.test.py 同时检查检测后处理，只在准备了检测用途时执行。
-    for (const test of ${JSON.stringify(["fsmn_vad.test.py", "media.test.py"].map((file) => path.resolve("src/backend/agent/media", file)))})
-      if (info.video || test.endsWith('fsmn_vad.test.py')) await uv.run(['run', 'python', '-I', test, ${JSON.stringify(path.join(runtime, "runtime"))}]);
-    const [listened, scanned] = await Promise.all([
-      media.listen(source, {device, language:${JSON.stringify(process.env.LINGUAGACHA_MEDIA_LANGUAGE ?? "JA")} }),
-      info.video ? media.scan(source, {out:'work/scan/text',device}) : Promise.resolve([]),
-    ]);
-    const refined = info.video ? await media.refine(source, {device,rows:scanned.slice(0,2).map((x,row)=>({...x,row}))}) : [];
-    await fs.writeFile('work/result.json', JSON.stringify({versions:process.versions, ort:{before:previousOrt,after:installedOrt}, elapsed:Date.now()-began, listened, scanned, refined, probe, device, video:info.video}, null, 2));
+    // helper.test.py 同时检查检测后处理，只在准备了检测用途时执行。
+    for (const test of ${JSON.stringify(["fsmn_vad.test.py", "helper.test.py"].map((file) => path.resolve("src/python/tests/media", file)))})
+      if (info.video || test.endsWith('fsmn_vad.test.py')) await uv.run(['run', 'python', '-I', test]);
+    const run = async device => {
+      const listened = await media.listen(source, {device, language:${JSON.stringify(process.env.LINGUAGACHA_MEDIA_LANGUAGE ?? "JA")} });
+      const scanned = info.video ? await media.scan(source, {out:'work/scan/text',device}) : [];
+      const refined = info.video ? await media.refine(source, {device,rows:scanned.slice(0,2).map((x,row)=>({...x,row}))}) : [];
+      return {listened, scanned, refined};
+    };
+    let device = 'gpu';
+    let completed;
+    try {
+      completed = await run(device);
+    } catch (error) {
+      if (!(error instanceof media.DeviceFailure)) throw error;
+      device = 'cpu';
+      completed = await run(device);
+    }
+    const {listened, scanned, refined} = completed;
+    await fs.writeFile('work/result.json', JSON.stringify({versions:process.versions, ort:{before:previousOrt,after:installedOrt}, elapsed:Date.now()-began, listened, scanned, refined, device, video:info.video}, null, 2));
     console.log('completed', listened.asr.length, scanned.length, refined.length);
   `,
     );

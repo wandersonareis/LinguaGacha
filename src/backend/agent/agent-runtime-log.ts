@@ -13,7 +13,7 @@ import { JsonTool } from "../../shared/utils/json-tool";
 import type { LogManager } from "../log/log-manager";
 import { project_assistant_message_parts, read_agent_tool_result_status } from "./agent-message";
 
-export type AgentStopReason = "user" | "reset" | "project_change" | "shutdown";
+export type AgentStopReason = "user" | "queue_send" | "reset" | "project_change" | "shutdown";
 export type AgentLogStatus = "success" | "error" | "stopped";
 type AgentLogEnd = {
   status: AgentLogStatus;
@@ -102,7 +102,7 @@ type AgentLogEvent =
   | { event: "stop_requested"; stop_reason: AgentStopReason }
   | {
       event: "operation_end";
-      operation: "input_prepare" | "compaction" | "cleanup";
+      operation: "input_prepare" | "compaction" | "cleanup" | "sdk";
       status: "error";
       ended_at: string;
     }
@@ -368,7 +368,7 @@ export class AgentRuntimeLog {
 
   /** 没有原生任务终帧的准备与清理失败仍携带所属会话和执行身份。 */
   public report_failure(
-    operation: "input_prepare" | "compaction" | "cleanup",
+    operation: "input_prepare" | "compaction" | "cleanup" | "sdk",
     error: unknown,
   ): void {
     this.append(

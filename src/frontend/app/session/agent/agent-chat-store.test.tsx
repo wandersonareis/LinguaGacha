@@ -696,39 +696,28 @@ describe("AgentChatStore", () => {
     expect(latest.input.draft.read()).toEqual({ text: "", attachments: [] });
   });
 
-  it("压缩回执应用命令期间收到的公开 running 条目", async () => {
-    desktop_api_mocks.api_get.mockResolvedValue(
-      agent_snapshot({ context: { tokens: 64_000, compactable: true, limits: null } }),
-    );
-    desktop_api_mocks.api_fetch.mockImplementationOnce(async () => {
-      event_source.change({
-        type: "entry_upsert",
-        entry: {
-          kind: "context_compaction",
-          createdAt: 1_000,
-          id: "manual-compaction",
-          status: "running",
-        },
-      });
-      return { revision: event_source.current_revision, status: "accepted" };
-    });
+  it("插队命令等待受理时立即应用停止事件", async () => {
+    desktop_api_mocks.api_get.mockResolvedValue(agent_snapshot({ state: "running" }));
+    const receipt = Promise.withResolvers<unknown>();
+    desktop_api_mocks.api_fetch.mockReturnValueOnce(receipt.promise);
     let latest!: ReturnType<typeof useAgentChat>;
     await render_probe(() => {
       latest = useAgentChat();
     });
     await wait_for(() => expect(latest.transport).toBe("ready"));
 
-    await act(async () => latest.compactContext());
+    let sending!: Promise<void>;
+    await act(async () => {
+      sending = latest.sendQueuedMessage("queue-1");
+      event_source.change({ type: "chat_status", state: "stopping" });
+    });
+    expect(latest.command).toBe("queue_send");
+    expect(latest.state).toBe("stopping");
 
-    expect(desktop_api_mocks.api_fetch).toHaveBeenCalledWith("/api/agent/context/compact");
-    expect(latest.entries).toEqual([
-      {
-        kind: "context_compaction",
-        createdAt: 1_000,
-        id: "manual-compaction",
-        status: "running",
-      },
-    ]);
+    await act(async () => {
+      receipt.resolve({ revision: event_source.current_revision, status: "accepted" });
+      await sending;
+    });
     expect(latest.command).toBeNull();
   });
 
@@ -1172,33 +1161,40 @@ describe("AgentChatStore", () => {
       entries: [
         {
           kind: "tool_call",
+          endedAt: null,
           id: "running",
           toolName: "read_skill",
           input: '{"path":"SKILL.md"}',
+          imageCount: 0,
           status: "running",
           output: null,
           createdAt: 1,
         },
         {
           kind: "tool_call",
+          endedAt: 12,
           id: "success",
           toolName: "workspace_run",
           input: '{"script":"console.log([])"}',
+          imageCount: 2,
           status: "success",
           output: ['{"items":[]}', "第二块\n", ""],
           createdAt: 2,
         },
         {
           kind: "tool_call",
+          endedAt: null,
           id: "unknown",
           toolName: "missing_tool",
           input: "{}",
+          imageCount: 0,
           status: "error",
           output: ["工具不存在"],
           createdAt: 3,
         },
         {
           kind: "tool_call",
+          endedAt: null,
           id: "legacy",
           toolName: "test_tool",
           status: "success",
@@ -1207,45 +1203,87 @@ describe("AgentChatStore", () => {
         },
         {
           kind: "tool_call",
+          endedAt: null,
           id: "invalid",
           toolName: "test_tool",
           input: "{}",
+          imageCount: 0,
           status: "success",
           output: { entries: [] },
           createdAt: 5,
         },
         {
           kind: "tool_call",
+          endedAt: null,
           id: "invalid-running-output",
           toolName: "workspace_run",
           input: "{}",
+          imageCount: 0,
           status: "running",
           output: "不应存在",
           createdAt: 6,
         },
         {
           kind: "tool_call",
+          endedAt: null,
           id: "invalid-success-output",
           toolName: "workspace_run",
           input: "{}",
+          imageCount: 0,
           status: "success",
           output: null,
           createdAt: 7,
         },
         ...["旧字符串", ["正文", 1]].map((output, index) => ({
           kind: "tool_call",
+          endedAt: null,
           id: `invalid-output-blocks-${index}`,
           toolName: "workspace_run",
           input: "{}",
+          imageCount: 0,
           status: "success",
           output,
           createdAt: 7,
         })),
         {
           kind: "tool_call",
+          endedAt: null,
+          id: "invalid-missing-image-count",
+          toolName: "workspace_run",
+          input: "{}",
+          status: "success",
+          output: [],
+          createdAt: 7,
+        },
+        ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((imageCount, index) => ({
+          kind: "tool_call",
+          endedAt: null,
+          id: `invalid-image-count-${index}`,
+          toolName: "workspace_run",
+          input: "{}",
+          imageCount,
+          status: "success",
+          output: [],
+          createdAt: 7,
+        })),
+        {
+          kind: "tool_call",
+          endedAt: null,
+          id: "invalid-running-image-count",
+          toolName: "workspace_run",
+          input: "{}",
+          imageCount: 1,
+          status: "running",
+          output: null,
+          createdAt: 7,
+        },
+        {
+          kind: "tool_call",
+          endedAt: null,
           id: "empty-output",
           toolName: "workspace_run",
           input: "{}",
+          imageCount: 0,
           status: "success",
           output: [],
           createdAt: 7,
@@ -1399,36 +1437,44 @@ describe("AgentChatStore", () => {
     expect(latest.entries).toEqual([
       {
         kind: "tool_call",
+        endedAt: null,
         id: "running",
         toolName: "read_skill",
         input: '{"path":"SKILL.md"}',
+        imageCount: 0,
         status: "running",
         output: null,
         createdAt: 1,
       },
       {
         kind: "tool_call",
+        endedAt: 12,
         id: "success",
         toolName: "workspace_run",
         input: '{"script":"console.log([])"}',
+        imageCount: 2,
         status: "success",
         output: ['{"items":[]}', "第二块\n", ""],
         createdAt: 2,
       },
       {
         kind: "tool_call",
+        endedAt: null,
         id: "unknown",
         toolName: "missing_tool",
         input: "{}",
+        imageCount: 0,
         status: "error",
         output: ["工具不存在"],
         createdAt: 3,
       },
       {
         kind: "tool_call",
+        endedAt: null,
         id: "empty-output",
         toolName: "workspace_run",
         input: "{}",
+        imageCount: 0,
         status: "success",
         output: [],
         createdAt: 7,

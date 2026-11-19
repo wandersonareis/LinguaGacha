@@ -1,5 +1,5 @@
+import { Type } from "typebox";
 import {
-  Type,
   fauxAssistantMessage,
   normalizeContext,
   type Model,
@@ -43,6 +43,46 @@ const TEST_USER_AGENT = "LinguaGacha/Test";
 const TEST_REQUEST_IDENTITY = { user_agent: TEST_USER_AGENT, session_id: "test-session" };
 
 describe("pi-ai 请求适配", () => {
+  it.each(["OpenAI", "OpenAIResponses"] as const)(
+    "%s 官方 Mistral 从目录读取档位并发送对应协议字段",
+    async (api_format) => {
+      const chat = api_format === "OpenAI";
+      for (const [level, effort] of [
+        ["DEFAULT", undefined],
+        ["OFF", "none"],
+        ["MAX", "max"],
+      ] as const) {
+        const request = resolve_request({
+          api_format,
+          api_url: "https://api.mistral.ai/v1",
+          model_id: "deepseek-v4-1-flash-1017",
+          thinking: { level },
+          threshold: { output_token_limit: 0 },
+          generation: { top_p: 0.8, top_p_custom_enable: true },
+        });
+        const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+          Response.json({}, { status: 400 }),
+        );
+        await request
+          .stream(request.model, request.context, { ...request.options, fetch })
+          .result();
+        const sent = new Request(...fetch.mock.calls[0]!);
+        const payload = await sent.json();
+        if (chat) {
+          expect(payload.reasoning_effort).toBe(effort);
+          if (level === "DEFAULT") {
+            expect(payload).toHaveProperty("top_p", 0.8);
+            expect(payload).not.toHaveProperty("max_tokens");
+            expect(payload).not.toHaveProperty("stream_options");
+          }
+        } else {
+          expect(payload.reasoning).toEqual(effort === undefined ? undefined : { effort });
+          expect(payload).not.toHaveProperty("include");
+        }
+      }
+    },
+  );
+
   it.each([
     "gemini-2.5-flash",
     "projects/gemini-4-project/locations/global/publishers/google/models/gemini-2.5-flash",
@@ -626,38 +666,6 @@ describe("pi-ai 请求适配", () => {
       }
     },
   );
-
-  it("MiMo V2.5 由 Pi 目录与适配器生成协议对应的思考字段", async () => {
-    const completions_request = resolve_request({
-      api_format: "OpenAI",
-      model_id: "mimo-v2.5-pro",
-      thinking: { level: "HIGH" },
-    });
-    const disabled_request = resolve_request({
-      api_format: "OpenAI",
-      model_id: "mimo-v2.5-pro",
-      thinking: { level: "OFF" },
-    });
-    const responses_request = resolve_request({
-      api_format: "OpenAIResponses",
-      model_id: "mimo-v2.5-pro",
-      thinking: { level: "HIGH" },
-    });
-
-    const completions_payload = await capture_payload(completions_request);
-    expect(completions_payload).toMatchObject({
-      thinking: { type: "enabled" },
-    });
-    expect(completions_payload).not.toHaveProperty("reasoning_effort");
-    await expect(capture_payload(disabled_request)).resolves.toHaveProperty(
-      "thinking.type",
-      "disabled",
-    );
-    await expect(capture_payload(responses_request)).resolves.toHaveProperty(
-      "reasoning.effort",
-      "high",
-    );
-  });
 
   it("Responses 未收录模型即使选择 HIGH 也不启用 reasoning", async () => {
     const request = resolve_request({

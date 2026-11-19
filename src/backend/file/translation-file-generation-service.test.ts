@@ -8,6 +8,7 @@ import { GenericFormat } from "./generic/generic-format";
 import { create_epub_fixture } from "../../test/epub-fixture";
 import { EPUBFormat } from "./epub/epub-format";
 import { create_item } from "../../domain/item";
+import { image_fixture } from "../../test/image-fixture";
 import type { PDFDocument } from "../../shared/pdf";
 import fs from "node:fs";
 import os from "node:os";
@@ -132,33 +133,103 @@ function create_database(
 }
 
 describe("TranslationFileGenerationService", () => {
-  it.each(["GENERIC", "MEDIA"])(
-    "仅含 %s 时直接生成报告原因与排除清单，且不创建目录",
-    async (file_type) => {
-      const session = new ProjectSessionState();
-      const project_path = path.join(temp_dir, "agent-only.lg");
-      await session.mark_loaded(project_path);
-      const service = new TranslationFileGenerationService(
-        create_generation_gate(),
-        { check_section_revisions: async () => {} },
-        new GameDirectoryOperations(),
-        create_database([], { asset: { content: Buffer.alloc(0), file_type } }),
-        create_setting_service(),
-        session,
-        async () => {},
-        create_pdf_execution(),
-      );
-      for (const generate of [
-        () => service.generate_files({ project_path, expected_section_revisions: { files: 0 } }),
-        () => service.generate_files_to_directory(path.join(temp_dir, "cli")),
-      ])
-        await expect(generate()).rejects.toMatchObject({
-          code: "project.no_files",
-          public_details: { reason: "no_generatable_files", excluded_files: ["asset"] },
-        });
-      expect(fs.readdirSync(temp_dir)).toEqual([]);
-    },
-  );
+  it("图片交给 Agent 写回并沿用同组译文", async () => {
+    const fixture = image_fixture(["completed", "duplicated"]);
+    const cover = image_fixture(["cover"]);
+    cover.book.pages[0]!.regions = [];
+    cover.records.pop();
+    const items = fixture.records.map((record, row) =>
+      create_item({
+        id: row + 1,
+        src: record.message,
+        row,
+        file_path: "book.image",
+        file_type: "IMAGE",
+        status: row === 0 ? "PROCESSED" : "DUPLICATED",
+        dst: row === 0 ? "同组译文" : "",
+      }),
+    );
+    items.push(
+      create_item({
+        id: items.length + 1,
+        src: "保留文本",
+        dst: "文本译文",
+        status: "PROCESSED",
+        file_path: "plain.txt",
+        file_type: "TXT",
+      }),
+    );
+    const session = new ProjectSessionState();
+    session.mark_loaded(path.join(temp_dir, "book.lg"));
+    const service = new TranslationFileGenerationService(
+      create_generation_gate(),
+      { check_section_revisions: async () => {} },
+      new GameDirectoryOperations(),
+      create_database(items, {
+        "book.image": { content: Buffer.from(await fixture.pack()), file_type: "IMAGE" },
+        "cover.image": { content: Buffer.from(await cover.pack()), file_type: "IMAGE" },
+        "plain.txt": { content: Buffer.from("保留文本"), file_type: "TXT" },
+      }),
+      create_setting_service(),
+      session,
+      async () => {},
+      create_pdf_execution(),
+    );
+    const generated = await service.generate_staging_files(path.join(temp_dir, "staging"), []);
+    expect(generated.writeback?.files).toEqual(["book.image", "cover.image"]);
+    expect(fs.readdirSync(generated.output_path)).toEqual(["plain.txt"]);
+    const direct = await service.generate_files({
+      project_path: path.join(temp_dir, "book.lg"),
+      expected_section_revisions: { files: 0 },
+    });
+    expect(direct.excluded_files).toEqual(["book.image", "cover.image"]);
+    expect(fs.readdirSync(direct.output_path)).toEqual(["plain.txt"]);
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(generated.writeback!.input_path, "cover.image", "items.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual([]);
+    const snapshot = path.join(generated.writeback!.input_path, "book.image", "items.json");
+    expect(JSON.parse(fs.readFileSync(snapshot, "utf8"))).toEqual([
+      { pageId: "completed", regionId: "text", output: "translated", text: "同组译文" },
+      { pageId: "duplicated", regionId: "text", output: "translated", text: "同组译文" },
+    ]);
+    expect(items[1]!.status).toBe("DUPLICATED");
+  });
+  it("仅含写回资产时直接生成报告排除清单，且不创建目录", async () => {
+    const session = new ProjectSessionState();
+    const project_path = path.join(temp_dir, "agent-only.lg");
+    await session.mark_loaded(project_path);
+    const service = new TranslationFileGenerationService(
+      create_generation_gate(),
+      { check_section_revisions: async () => {} },
+      new GameDirectoryOperations(),
+      create_database([], {
+        "data.generic": { content: Buffer.alloc(0), file_type: "GENERIC" },
+        "video.media": { content: Buffer.alloc(0), file_type: "MEDIA" },
+        "book.image": { content: Buffer.alloc(0), file_type: "IMAGE" },
+      }),
+      create_setting_service(),
+      session,
+      async () => {},
+      create_pdf_execution(),
+    );
+    for (const generate of [
+      () => service.generate_files({ project_path, expected_section_revisions: { files: 0 } }),
+      () => service.generate_files_to_directory(path.join(temp_dir, "cli")),
+    ])
+      await expect(generate()).rejects.toMatchObject({
+        code: "project.no_files",
+        public_details: {
+          reason: "no_generatable_files",
+          excluded_files: ["data.generic", "video.media", "book.image"],
+        },
+      });
+    expect(fs.readdirSync(temp_dir)).toEqual([]);
+  });
 
   it("生成持有工程独占范围，Agent 暂存生成必须归属当前回合", async () => {
     const gate = new RuntimeOperationGate();
@@ -301,6 +372,31 @@ describe("TranslationFileGenerationService", () => {
         ]),
       ),
     );
+    const media_records = [{ ...records[0], start: 0, end: 2, kind: "dialogue" }];
+    const media_content = Buffer.from(
+      await write_zip(
+        new Map([
+          [
+            "media.json",
+            JSON.stringify({
+              source: {
+                path: "C:/media/movie.mp4",
+                size: 1,
+                mtime_ns: "1",
+                track: 0,
+                language: "JA",
+              },
+              duration: 2,
+              video: { width: 1920, height: 1080 },
+              speech: null,
+              asr: null,
+              text: [],
+            }),
+          ],
+          ["items.json", JSON.stringify(media_records)],
+        ]),
+      ),
+    );
     const items = await new GenericFormat().read_from_stream(content, "data.generic");
     items[0] = { ...items[0]!, status: "PROCESSED", dst: "你好" };
     const session = new ProjectSessionState();
@@ -323,7 +419,7 @@ describe("TranslationFileGenerationService", () => {
         ],
         {
           "data.generic": { content, file_type: "GENERIC" },
-          "movie.media": { content, file_type: "MEDIA" },
+          "movie.media": { content: media_content, file_type: "MEDIA" },
           "empty.generic": {
             content: Buffer.from(await write_zip(new Map([["items.json", "[]"]]))),
             file_type: "GENERIC",
@@ -355,7 +451,7 @@ describe("TranslationFileGenerationService", () => {
           "utf8",
         ),
       ),
-    ).toEqual([{ ...records[0], message: "你好" }]);
+    ).toEqual([{ ...media_records[0], message: "你好" }]);
     expect(
       JSON.parse(
         fs.readFileSync(

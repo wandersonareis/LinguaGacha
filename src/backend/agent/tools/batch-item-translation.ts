@@ -1,5 +1,5 @@
 import { ITEM_STATUSES } from "../../../domain/item";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import type {
   AgentBatchTranslationRequest,
@@ -113,7 +113,8 @@ export function create_agent_batch_item_translation_tool(
         ),
         thinking_downgrade: Type.Optional(
           Type.Boolean({
-            description: "默认 `true`，即降低模型思考等级",
+            description:
+              "默认设为 `true`：即降低思考等级，只有在供应商报错信息显示不接受降低时设为 `false` 并重试",
           }),
         ),
       },

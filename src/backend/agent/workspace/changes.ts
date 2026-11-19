@@ -1,9 +1,9 @@
-import type { Static } from "@earendil-works/pi-ai";
+import type { Static } from "typebox";
 import type { AgentWorkspacePageUpdateIntent } from "../../project/agent-workspace-page-write";
 import path from "node:path";
 
 import { Check } from "typebox/value";
-import type { TSchema } from "@earendil-works/pi-ai";
+import type { TSchema } from "typebox";
 import { is_json_record, type JsonRecord } from "../../../domain/json";
 import { PROMPT_KINDS } from "../../../domain/prompt";
 import { QUALITY_RULE_KINDS, type QualityRuleKind } from "../../../domain/quality";
@@ -36,6 +36,7 @@ import { parsePageUpdate } from "./page-updates";
 export type ParsedAgentWorkspaceChanges = Readonly<{
   batch: AgentWorkspaceIntentBatch;
   files: {
+    replaces: (Static<typeof AGENT_WORKSPACE_FILE_SCHEMAS.replaces> & { line: number })[];
     creates: (Static<typeof AGENT_WORKSPACE_FILE_SCHEMAS.creates> & { line: number })[];
     updates: (Static<typeof AGENT_WORKSPACE_FILE_SCHEMAS.updates> & { line: number })[];
     deletes: (Static<typeof AGENT_WORKSPACE_FILE_SCHEMAS.deletes> & { line: number })[];
@@ -110,14 +111,21 @@ export async function prepare_agent_workspace_changes(args: {
     }
     quality[kind] = { creates, updates, deletes };
   }
-  const files: ParsedAgentWorkspaceChanges["files"] = { creates: [], updates: [], deletes: [] };
-  for (const operation of AGENT_WORKSPACE_CHANGE_OPERATIONS) {
+  const files: ParsedAgentWorkspaceChanges["files"] = {
+    creates: [],
+    updates: [],
+    deletes: [],
+    replaces: [],
+  };
+  for (const operation of [...AGENT_WORKSPACE_CHANGE_OPERATIONS, "replaces"] as const) {
     for (const row of await read_change_rows(
       args.nativeFs,
       path.join(args.workspacePath, AGENT_WORKSPACE_CHANGE_PATHS.files[operation]),
     )) {
       if (operation === "creates" && Check(AGENT_WORKSPACE_FILE_SCHEMAS.creates, row.value))
         files.creates.push({ ...row.value, line: row.line });
+      else if (operation === "replaces" && Check(AGENT_WORKSPACE_FILE_SCHEMAS.replaces, row.value))
+        files.replaces.push({ ...row.value, line: row.line });
       else if (operation === "updates" && Check(AGENT_WORKSPACE_FILE_SCHEMAS.updates, row.value))
         files.updates.push({ ...row.value, line: row.line });
       else if (operation === "deletes" && Check(AGENT_WORKSPACE_FILE_SCHEMAS.deletes, row.value))
@@ -128,7 +136,13 @@ export async function prepare_agent_workspace_changes(args: {
             AGENT_WORKSPACE_FILE_SCHEMAS[operation],
             row,
             "files",
-            operation === "creates" ? "create" : operation === "updates" ? "update" : "delete",
+            operation === "creates"
+              ? "create"
+              : operation === "updates"
+                ? "update"
+                : operation === "replaces"
+                  ? "replace"
+                  : "delete",
           ),
           ...(typeof row.value["source_path"] === "string"
             ? { source_path: row.value["source_path"] }

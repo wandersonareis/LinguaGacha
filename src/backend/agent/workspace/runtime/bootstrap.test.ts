@@ -21,7 +21,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import { inject, afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
-import { AGENT_WORKSPACE_CONTRACT, AGENT_WORKSPACE_REFERENCES } from "../../tools/contract";
+import { AGENT_WORKSPACE_CONTRACT } from "../contract";
 import { AgentWorkspaceRunner, AgentWorkspaceRunError } from "./runner";
 import type { AgentProcessOutput } from "../../process-output";
 import { AGENT_WORKSPACE_RUN_ROOT } from "./policy";
@@ -30,6 +30,10 @@ import { AGENT_IMAGE_MAX_EDGE } from "../../../../shared/agent-image";
 import app_package from "../../../../../package.json";
 import { MEDIA_MODELS } from "../../media/models";
 import { DEFAULT_PYTHON_VERSION } from "../../uv/runtime";
+import { png_fixture } from "../../../../test/media-fixture";
+import { create_image_text_renderer } from "../../tools/render-image-text";
+import { default_native_fs } from "../../../../native/native-fs";
+import { image_fixture } from "../../../../test/image-fixture";
 
 const electron_path =
   process.env.LINGUAGACHA_TEST_ELECTRON ?? (createRequire(import.meta.url)("electron") as string);
@@ -54,33 +58,27 @@ beforeAll(async () => {
   await cp(inject("workspaceRuntimeDirectory"), runtime, { recursive: true });
   await mkdir(path.join(workspace, AGENT_WORKSPACE_RUN_ROOT), { recursive: true });
   await writeFile(path.join(workspace, "package.json"), JSON.stringify({ type: "module" }));
-  await writeFile(path.join(workspace, "contract.json"), JSON.stringify(AGENT_WORKSPACE_CONTRACT));
-  for (const [relative_path, content] of Object.entries(AGENT_WORKSPACE_REFERENCES)) {
-    await mkdir(path.dirname(path.join(workspace, relative_path)), { recursive: true });
-    await writeFile(path.join(workspace, relative_path), content);
-  }
 }, 60_000);
 
 afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-it("媒体 SDK 使用宿主指定的模型目录并拒绝缺失模型的探查", async () => {
-  const { file, size } = MEDIA_MODELS.vad;
+it("媒体 SDK 使用宿主指定的模型目录", async () => {
+  const { file } = MEDIA_MODELS.vad;
   await run(`
     import assert from 'node:assert/strict';
     import { mkdir, writeFile, rm } from 'node:fs/promises';
     import path from 'node:path';
     import * as media from '@lg/media';
     const models = ${JSON.stringify(path.join(root, "media storage/models"))};
-    const model = ${JSON.stringify({ file, size })};
+    const model = ${JSON.stringify({ file })};
     assert.ok((await media.missing_models()).includes(model.file));
     const file = path.join(models, model.file);
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, Buffer.alloc(model.size));
-    assert.ok(!(await media.missing_models()).includes(model.file));
+    await writeFile(file, "present");
     try {
-      await assert.rejects(media.probe_gpu(), /Media models are missing/);
+      assert.ok(!(await media.missing_models()).includes(model.file));
     } finally {
       await rm(file);
     }
@@ -110,7 +108,9 @@ it("领域 SDK 通过绑定通道识别来源和生成文件，失败原因传�
   const result = await run(
     `
     import { inspectSources, generateFiles, getOutputPaths } from '@lg/project';
+    import { describe_package } from '@lg/generic';
     import assert from 'node:assert/strict';
+    assert.match(describe_package(), /GenericItems/);
     await assert.rejects(generateFiles([]), /fixture generation failed/);
     console.log(JSON.stringify({ sources: await inspectSources(['work/input.txt']), generated: await generateFiles([]), paths: await getOutputPaths(), selected: await getOutputPaths(${JSON.stringify(workspace)}) }));
   `,
@@ -140,6 +140,191 @@ it("领域 SDK 通过绑定通道识别来源和生成文件，失败原因传�
     ],
   });
   expect(inspectSources).toHaveBeenCalledOnce();
+});
+
+it(
+  "部署后的媒体 SDK 通过共享 Python 通道生成联系表",
+  async () => {
+    const source = path.join(workspace, "work/sheet-source.png");
+    await writeFile(source, png_fixture());
+    await run(
+      `
+        import { sheets } from "@lg/media";
+        import { uv } from "@lg/uv";
+        import assert from "node:assert/strict";
+        await uv.run(["add", "numpy==2.5.5", "opencv-python-headless==5.1.0.95", "--default-index", "https://pypi.org/simple"]);
+        const result = await sheets([{ id: 7, start: 0, file: "work/sheet-source.png" }], "work/sheets");
+        assert.deepEqual(result.map(sheet => sheet.ids), [[7]]);
+      `,
+      AbortSignal.timeout(EXECUTION_TIMEOUT_MS),
+    );
+  },
+  EXECUTION_TIMEOUT_MS + RUN_TIMEOUT_MS,
+);
+
+it("图片分批出图沿用清单字号与页序，选页试排只生成目标页", async () => {
+  const fixture = image_fixture(["saved", "override", "auto", "failed"]);
+  for (const page of fixture.book.pages) page.regions[0]!.fontSize = 18;
+  const directory = path.join(workspace, "work/image-layout");
+  const source = path.join(directory, "source");
+  await mkdir(path.join(source, "originals"), { recursive: true });
+  await cp(
+    new URL("../../../../../builtin/skills/image/scripts/render.mjs", import.meta.url),
+    path.join(directory, "render.mjs"),
+  );
+  await writeFile(path.join(source, "image.json"), JSON.stringify(fixture.book));
+  await writeFile(path.join(source, "items.json"), JSON.stringify(fixture.records));
+  for (const page of fixture.book.pages)
+    await writeFile(path.join(source, page.original), fixture.original);
+  await writeFile(
+    path.join(directory, "writeback.json"),
+    JSON.stringify(
+      fixture.records.map(({ pageId, regionId }) => ({
+        pageId,
+        regionId,
+        output: "translated",
+        text: "译文",
+      })),
+    ),
+  );
+
+  const png = fixture.patch.toString("base64");
+  await run(
+    `
+    import { render_book } from '../image-layout/render.mjs';
+    import assert from 'node:assert/strict';
+    import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+    import path from 'node:path';
+    const options = {
+      asset_path: 'book.image',
+      source: 'work/image-layout/source',
+      input: 'work/image-layout/writeback.json',
+      output: 'work/image-layout/output',
+      fontSizes: [
+        { pageId: 'override', regionId: 'text', fontSize: 21 },
+        { pageId: 'auto', regionId: 'text', fontSize: null },
+        { pageId: 'failed', regionId: 'text', fontSize: 100 },
+      ],
+    };
+    const layoutBatches = [], compositionBatches = [];
+    const pixels = {
+      layout: async ({ pages }) => {
+        layoutBatches.push(pages.length);
+        for (const { output, lettering } of pages) {
+          await writeFile(output, JSON.stringify(lettering.map(value => ({
+            ...value, size: [1, 1], distance: 'AAAAAA==', direction: 'vertical-rl',
+            backgroundColor: [255, 255, 255],
+          }))));
+        }
+      },
+      compose: async ({ pages }) => {
+        compositionBatches.push(pages.length);
+        assert.equal(new Set(pages.map(job => job.original)).size, pages.length);
+        for (const { original, output, bilingual, qa } of pages) {
+          for (const file of [qa.path, bilingual, output]) {
+            if (!file) continue;
+            await mkdir(path.dirname(file), { recursive: true });
+            await copyFile(original, file);
+          }
+        }
+      },
+    };
+    const { report } = await render_book(options, pixels);
+    const { files } = JSON.parse(await readFile(report.path, 'utf8'));
+    assert.deepEqual(files.map(({ pageId, entries }) => [pageId, entries]), [
+      ['saved', [{ regionId: 'text', output: 'translated', fontSize: 18 }]],
+      ['override', [{ regionId: 'text', output: 'translated', fontSize: 21 }]],
+      ['auto', [{ regionId: 'text', output: 'translated', fontSize: 16 }]],
+      ['failed', [{ regionId: 'text', output: 'original', reason: 'layout_no_fit' }]],
+    ]);
+    assert(layoutBatches.some(size => size > 1), 'Lettering requests should include multiple pages');
+    assert(compositionBatches.some(size => size > 1), 'Composition requests should include multiple pages');
+    const preview = await render_book({
+      ...options,
+      output: 'work/image-layout/preview',
+      pageIds: ['auto', 'saved'],
+    }, pixels);
+    const previewReport = JSON.parse(await readFile(preview.report.path, 'utf8'));
+    assert.deepEqual(previewReport.files, [files[0], files[2]]);
+    assert.deepEqual((await readdir(path.join(preview.output_path, 'book'))).sort(), ['auto.png', 'saved.png']);
+    assert.deepEqual((await readdir(path.join(preview.bilingual_output_path, 'book'))).sort(), ['auto.png', 'saved.png']);
+    assert.deepEqual((await readdir(preview.qa_path)).sort(), ['auto.png.webp', 'saved.png.webp']);
+    const failedOutput = 'work/image-layout/failed-output';
+    await assert.rejects(render_book({ ...options, output: failedOutput }, {
+      ...pixels,
+      compose: async job => {
+        await pixels.compose({ pages: job.pages.slice(0, 1) });
+        throw new Error('Composition failed');
+      },
+    }), /Composition failed/);
+    await assert.rejects(stat(failedOutput), { code: 'ENOENT' });
+    for (const pageIds of [[], ['missing'], ['saved', 'saved']]) {
+      await assert.rejects(render_book({ ...options, output: 'work/image-layout/invalid', pageIds }, pixels), /page/i);
+    }
+  `,
+    undefined,
+    undefined,
+    {
+      renderImageText: create_image_text_renderer({
+        root: workspace,
+        nativeFs: default_native_fs,
+        host: async ({ page }) =>
+          page.map(({ regionId, fontSize }) =>
+            fontSize === 100
+              ? { regionId, png: null }
+              : { regionId, png, fontSize: fontSize ?? 16 },
+          ),
+      }),
+    },
+  );
+});
+
+it("停止绘字脚本时向宿主传递取消并等待窗口收尾", async () => {
+  const controller = new AbortController();
+  const entered = Promise.withResolvers<void>();
+  const cancelled = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  let finished = false;
+  const pending = run(
+    `
+    import { render_image_text_page } from '@lg/image';
+    import assert from 'node:assert/strict';
+    import { writeFile } from 'node:fs/promises';
+    const file = 'work/lettering.json';
+    const region = { regionId: 'r1', size: [64,76], distance: Buffer.alloc(64*76*4).toString('base64'), direction: 'vertical-rl', backgroundColor: [255,255,255], text: '译文', fontSize: 20 };
+    await writeFile(file, JSON.stringify([{...region, fontSize:3}]));
+    await assert.rejects(render_image_text_page(file), /Invalid workspace render_image_text_page request/);
+    await assert.rejects(render_image_text_page('package.json'), /outside the workspace/);
+    await writeFile(file, JSON.stringify([region]));
+    await render_image_text_page(file);
+  `,
+    controller.signal,
+    undefined,
+    {
+      renderImageText: create_image_text_renderer({
+        root: workspace,
+        nativeFs: default_native_fs,
+        host: async (_request, signal) => {
+          signal!.addEventListener("abort", () => cancelled.resolve(), { once: true });
+          entered.resolve();
+          await closed.promise;
+          return [];
+        },
+      }),
+    },
+  ).finally(() => {
+    finished = true;
+  });
+  const rejection = expect(pending).rejects.toThrow("停止图片绘字");
+  try {
+    await Promise.race([entered.promise, pending]);
+    controller.abort(new Error("停止图片绘字"));
+    await cancelled.promise;
+    expect(finished).toBe(false);
+  } finally {
+    closed.resolve();
+    await rejection;
+  }
 });
 
 it("搜索 SDK 经真实 IPC 保留原生响应并校验参数", async () => {
@@ -209,6 +394,7 @@ it("独立部署目录支持原生模块、主程序身份、自然退出和异�
     import { fileURLToPath } from 'node:url';
     import value from '../scripts/helper.cjs';
     import { value as itemPath } from '../scripts/helper.js';
+    import '@lg/image'; // 仓库外部署必须能解析新 SDK 及其依赖。
     await fs.writeFile('work/state.json', JSON.stringify(value));
     console.log(JSON.stringify({ main: fileURLToPath(import.meta.url) === process.argv[1], value, itemPath }));
     console.error('ordinary stderr');
@@ -302,7 +488,7 @@ it.each(["user", "builtin"])(
     import { buildPdfDocument } from '@lg/pdf';
     import { readFile, writeFile } from 'node:fs/promises';
     import { title } from './helper.mjs';
-    import { queryItemContexts } from '@lg/project/item-contexts';
+    import { queryItemContexts } from '@lg/project';
     import { compileLiteralPatterns } from '@lg/utils/literal-matcher';
     export async function inspect() {
       await writeFile('work/items.jsonl', JSON.stringify({item_id:1,file_path:'a',src:'Straße'}));
@@ -532,10 +718,6 @@ it.each([false, true])(
       await symlink(external, path.join(logical_workspace, "work", "output"), link_type);
       await writeFile(path.join(external, "helper.mjs"), "export const title = 'linked';");
       await writeFile(
-        path.join(logical_workspace, "contract.json"),
-        JSON.stringify(AGENT_WORKSPACE_CONTRACT),
-      );
-      await writeFile(
         path.join(logical_workspace, "package.json"),
         JSON.stringify({ type: "module" }),
       );
@@ -681,7 +863,7 @@ it("页面更新模块在部署工作区解析记录并判定目标", async () =
       if (specifier === 'mupdf') throw new Error('工作区数据模块不应初始化 PDF 引擎');
       return nextResolve(specifier, context);
     }});
-    await import('@lg/project/item-contexts');
+    await import('@lg/project');
     const { parsePageUpdate, resolvePageUpdates } = await import('@lg/pdf/page-updates');
     const value = {file_path:'sample.pdf',page:1,fp:'abcd',translation:null,reviewed:false,notes:''};
     const valid = parsePageUpdate({line:2,value});
@@ -844,8 +1026,8 @@ it("真实 uv 安装本地 wheel，搬移后恢复并取消后代", async () => 
   const initial = await run(
     `
     import { uv } from '@lg/uv';
-    await uv.run(['add', ${JSON.stringify(wheel_path)}, '--offline']);
-    await uv.run(['run', '--offline', 'python', '-c', "from pathlib import Path; import lg_python_fixture; Path('work/python-result.txt').write_text(lg_python_fixture.value, encoding='utf-8')"]);
+    await uv.run(['add', ${JSON.stringify(wheel_path)}, '--default-index', 'https://pypi.org/simple']);
+    await uv.run(['run', '--offline', 'python', '-c', "from pathlib import Path; import lg, lg_python_fixture; Path('work/python-result.txt').write_text(lg_python_fixture.value, encoding='utf-8'); Path('work/python-source.txt').write_text(str(Path(lg.__file__).resolve()), encoding='utf-8')"]);
     console.log('python ready');
   `,
     AbortSignal.timeout(30_000),
@@ -854,6 +1036,9 @@ it("真实 uv 安装本地 wheel，搬移后恢复并取消后代", async () => 
   expect(await readFile(path.join(workspace, "work/python-result.txt"), "utf8")).toBe(
     "搭档的 Python",
   );
+  expect(
+    await realpath(await readFile(path.join(workspace, "work/python-source.txt"), "utf8")),
+  ).toBe(await realpath(path.join(runtime, "runtime/python/lg/__init__.py")));
 
   // 次版本链接与 venv 都记录绝对路径，搬移后由 uv 自行重建，应用不另做恢复。
   const moved = path.join(root, "移动后的 Python");
@@ -907,6 +1092,7 @@ async function run(
     AgentWorkspaceRunRequest,
     | "printPDF"
     | "inspectSources"
+    | "renderImageText"
     | "generateFiles"
     | "getOutputPaths"
     | "emitImage"

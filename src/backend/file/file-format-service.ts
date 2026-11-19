@@ -1,4 +1,7 @@
-import { GenericFormat, GENERIC_ITEMS_MEMBER } from "./generic/generic-format";
+import { GenericFormat } from "./generic/generic-format";
+import { MediaFormat } from "./media/media-format";
+import { PACKAGE_ITEMS_MEMBER } from "./shared/package-items";
+import { ImageFormat } from "./image/image-format";
 import { group_items } from "./shared/file-format-helpers";
 import { collect_game_file_list } from "./shared/game/source-files";
 import { resolve_game_source_input } from "./shared/game/source-input";
@@ -105,8 +108,9 @@ export class FileFormatService {
   private readonly formats: readonly FormatCatalogEntry[]; // 内置 + 已启用插件的生效目录
   private readonly file_formats: readonly FormatCatalogEntry[]; // 来源发现只消费文件级条目
   // 格式处理器随服务实例固定，解析与写回始终复用同一组配置。
+  private readonly image = new ImageFormat();
   private readonly generic = new GenericFormat();
-  private readonly media = new GenericFormat("MEDIA");
+  private readonly media = new MediaFormat();
   private readonly txt: TXTFormat;
   private readonly md: MDV2Format;
   private readonly ass: ASSFormat;
@@ -190,6 +194,7 @@ export class FileFormatService {
       ".pdf": "PDF",
       ".generic": "GENERIC",
       ".media": "MEDIA",
+      ".image": "IMAGE",
     };
     let type =
       (file_type === "NONE" ? undefined : file_type) ??
@@ -248,6 +253,8 @@ export class FileFormatService {
           file_type === "XLSX" || file_type === "WOLFXLSX" ? file_type : undefined,
         )),
       };
+    if (type === "IMAGE")
+      return { kind: "items", file_type: "IMAGE", ...(await this.image.read(content, rel_path)) };
     const formats = {
       GENERIC: this.generic,
       MEDIA: this.media,
@@ -620,7 +627,7 @@ export class FileFormatService {
   public async write_items(
     items: Item[],
     context: FileFormatServiceWriteContext,
-    writeback_path?: string, // 通用与视频写回输入仅在调用方指定独立目录时生成。
+    writeback_path?: string, // 调用方指定独立目录时才生成 Agent 写回输入。
     bilingual_files?: readonly string[],
   ): Promise<void> {
     const { paths, asset_reader } = context;
@@ -639,22 +646,24 @@ export class FileFormatService {
     await this.kvjson.write_to_path(items, paths, asset_reader);
     await this.write_messagejson(items, context);
     if (writeback_path !== undefined) {
-      // 视频字幕的样式与渲染归 Agent，与通用数据共用写回输入。
-      const groups = { GENERIC: group_items(items, "GENERIC"), MEDIA: group_items(items, "MEDIA") };
-      for (const file of context.source_files) {
-        if (file.file_type !== "GENERIC" && file.file_type !== "MEDIA") continue;
-        const asset = await asset_reader(file.path);
-        if (asset === null)
-          throw new AppError("file.not_found", { public_details: { file: file.path } });
-        const output = await this.generic.render_text(
-          asset,
-          groups[file.file_type].get(file.path) ?? [],
-          file.path,
-        );
-        await this.native_fs.write_file(
-          path.join(writeback_path, file.path, GENERIC_ITEMS_MEMBER),
-          output,
-        );
+      const formats = [
+        ["GENERIC", this.generic],
+        ["MEDIA", this.media],
+        ["IMAGE", this.image],
+      ] as const;
+      for (const [file_type, format] of formats) {
+        const groups = group_items(items, file_type);
+        for (const file of context.source_files) {
+          if (file.file_type !== file_type) continue;
+          const asset = await asset_reader(file.path);
+          if (asset === null)
+            throw new AppError("file.not_found", { public_details: { file: file.path } });
+          const output = await format.render_text(asset, groups.get(file.path) ?? [], file.path);
+          await this.native_fs.write_file(
+            path.join(writeback_path, file.path, PACKAGE_ITEMS_MEMBER),
+            output,
+          );
+        }
       }
     }
     await this.xlsx.write_to_path(items, paths, asset_reader);

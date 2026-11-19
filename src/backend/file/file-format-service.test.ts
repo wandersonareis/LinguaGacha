@@ -20,7 +20,7 @@ import { NativeFs } from "../../native/native-fs";
 import { write_zip } from "../../test/zip-fixture";
 import { FileFormatService } from "./file-format-service";
 import { PROJECT_SOURCE_FORMATS } from "../../shared/project-source-formats";
-import { create_renpy_fixture, compiled_fixture } from "../../test/renpy-fixture";
+import { create_renpy_fixture, compiled_fixture, extract_fixture } from "../../test/renpy-fixture";
 import { read_renpy_metadata } from "./renpy/item";
 import { read_renpy_format_metadata } from "./renpy/profile";
 
@@ -69,6 +69,7 @@ it.each(["script", "unselected"])("Ren’Py %s 读取失败按真实依赖保留
   );
   expect(metadata.old_substitutions).toBe(true);
   const output = path.join(temp.path, "out");
+  const game_output = path.join(output, entry.rel_path.replace(/\.renpy$/u, ""));
   const context = {
     paths: { translated_path: output, bilingual_path: output },
     source_files: [{ path: entry.rel_path, file_type: "RENPY" }],
@@ -81,10 +82,14 @@ it.each(["script", "unselected"])("Ren’Py %s 读取失败按真实依赖保留
     const code = parsed.items.find(
       (item) => read_renpy_metadata(item.extra_field).usage === "code",
     )!;
-    await expect(
-      service.write_items([{ ...code, status: "PROCESSED", dst: "代码译文" }], context),
-    ).resolves.toBeUndefined();
-  } else await expect(write).resolves.toBeUndefined();
+    await service.write_items([{ ...code, status: "PROCESSED", dst: "代码译文" }], context);
+  } else {
+    await write;
+  }
+  const script = native.read_file(path.join(game_output, "game/script.rpyc"));
+  expect((await extract_fixture(script)).candidates).toContainEqual(
+    expect.objectContaining({ text: failure === "script" ? "代码译文" : "译文" }),
+  );
 });
 
 /**
@@ -813,7 +818,28 @@ it.each([false, true])("视频资产只输出写回输入，空记录=%s", async
   using temp = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "lg-video-export-"));
   const service = create_service();
   const records = empty ? [] : [{ message: "原文", start: 0, end: 2, kind: "dialogue" }];
-  const content = await write_zip(new Map([["items.json", JSON.stringify(records)]]));
+  const content = await write_zip(
+    new Map([
+      [
+        "media.json",
+        JSON.stringify({
+          source: {
+            path: "C:/media/movie.mp4",
+            size: 1,
+            mtime_ns: "1",
+            track: 0,
+            language: "JA",
+          },
+          duration: 2,
+          video: { width: 1920, height: 1080 },
+          speech: null,
+          asr: null,
+          text: [],
+        }),
+      ],
+      ["items.json", JSON.stringify(records)],
+    ]),
+  );
   const parsed = await service.parse_asset("movie.media", content);
   expect(parsed).toMatchObject({ kind: "items", file_type: "MEDIA" });
   if (parsed.kind !== "items") throw new Error("Expected items");

@@ -191,7 +191,7 @@ export type AgentQueuedInput = AgentMessageInput & {
   createdAt: number;
 };
 
-/** paused 只阻止自动续取。canSendNow 表示当前运行时已经到达 Pi 可 `steer` 的阶段。 */
+/** paused 阻止自动续取，canSendNow 表示当前允许直接发送或停止当前轮次后发送。 */
 export type AgentInputQueueSnapshot = JsonRecord & {
   paused: boolean;
   canSendNow: boolean;
@@ -209,7 +209,9 @@ type AgentToolEntryBase = JsonRecord & {
   id: string;
   toolName: string;
   input: string;
+  imageCount: number; // 未提交回执或无图时为 0。
   createdAt: number;
+  endedAt: number | null; // 由已持久化工具回执的时间戳投影，运行中为 null。
 };
 
 /** 工具终帧按顺序保留文本块原文。数组为空表示没有文本输出，块间排版由前端负责。 */

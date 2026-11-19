@@ -207,8 +207,8 @@ export const pt_br_app = {
     agent_request: "Exporte as traduções sem realizar outras operações",
     action: "Exportar traduções",
     confirmation: {
-      generic_description:
-        "Este projeto contém arquivos de áudio/vídeo ou pacotes de dados genéricos que precisam ser processados pelo AGENT e serão ignorados na exportação direta …",
+      agent_description:
+        "Este projeto contém recursos que precisam ser finalizados pelo AGENT. A exportação direta ignorará esses recursos …",
       description: "Exportar as traduções disponíveis no momento?",
       checking: "Verificando arquivos do projeto e avisos de revisão …",
       check_failed:

@@ -1,3 +1,5 @@
+import { image_fixture } from "../../test/image-fixture";
+import { ImageFormat } from "../file/image/image-format";
 import { GameDirectoryOperations } from "../file/shared/game/game-directory-operations";
 import { create_godot_fixture, godot_pack_fixture } from "../../test/godot-fixture";
 import {
@@ -2832,4 +2834,86 @@ describe("ProjectContentService", () => {
 
     await database.close();
   });
+});
+
+it("图片替换保留同文不同译法、空译文及排除状态，坏包失败时保留旧资产", async () => {
+  const { database, service, lg_path } = await create_service();
+  const f = image_fixture(["first", "second", "empty", "excluded"]);
+  const source = project_path("book.image");
+  fs.writeFileSync(source, await f.pack());
+  const request = {
+    projectPath: lg_path,
+    source: "test",
+    revisionSections: ["files" as const],
+    creates: [],
+    updates: [],
+    deletes: [],
+    signal: new AbortController().signal,
+  };
+  const revision = async () => ({
+    files: get_section_revision(await database.get_all_meta(lg_path), "files"),
+  });
+  try {
+    await service.apply_file_changes({
+      ...request,
+      creates: [{ source_path: source }],
+      expectedSectionRevisions: await revision(),
+    });
+    const items = await database.get_all_items(lg_path);
+    await database.transaction(lg_path, (writer) =>
+      writer.set_items(
+        lg_path,
+        items.map((item, index) => ({
+          ...item,
+          status: index === 3 ? "EXCLUDED" : "PROCESSED",
+          dst: ["是的", "嗯", "", "保留旧译文"][index]!,
+        })),
+      ),
+    );
+    f.book.pages.reverse();
+    f.records.reverse();
+    f.book.pages[2]!.regions[0]!.fontSize = 19;
+    fs.writeFileSync(source, await f.pack());
+    const result = await service.apply_file_changes({
+      ...request,
+      replaces: [{ file_path: "book.image", source_path: source, inheritance_mode: "inherit" }],
+      expectedSectionRevisions: await revision(),
+    });
+    expect(result).toMatchObject({
+      kind: "applied",
+      files: { replaced: [{ preserved: 3, inherited: 0, contested: [] }] },
+    });
+    await database.close_project(lg_path);
+    const saved = await database.get_all_items(lg_path);
+    expect(saved.map((item) => [item["status"], item["dst"], item["extra_field"]])).toEqual([
+      ["EXCLUDED", "保留旧译文", ""],
+      ["PROCESSED", "", ""],
+      ["PROCESSED", "嗯", ""],
+      ["PROCESSED", "是的", ""],
+    ]);
+    const asset = await database.read_asset_content(lg_path, "book.image");
+    const output = await new ImageFormat().read(asset!, "book.image");
+    expect(output.items).toHaveLength(4);
+    expect(output.image.book.pages[2]!.regions[0]!.fontSize).toBe(19);
+    fs.writeFileSync(source, "broken");
+    expect(
+      await service.apply_file_changes({
+        ...request,
+        replaces: [{ file_path: "book.image", source_path: source, inheritance_mode: "inherit" }],
+        expectedSectionRevisions: await revision(),
+      }),
+    ).toMatchObject({ kind: "source_failed" });
+    expect(await database.read_asset_content(lg_path, "book.image")).toEqual(asset);
+    fs.writeFileSync(source, await f.pack());
+    await service.apply_file_changes({
+      ...request,
+      replaces: [{ file_path: "book.image", source_path: source, inheritance_mode: "none" }],
+      expectedSectionRevisions: await revision(),
+    });
+    expect(
+      (await database.get_all_items(lg_path)).every((item) => item["status"] !== "PROCESSED"),
+    ).toBe(true);
+  } finally {
+    await database.close_project(lg_path);
+  }
 });

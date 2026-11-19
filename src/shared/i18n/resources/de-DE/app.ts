@@ -214,8 +214,8 @@ export const de_de_app = {
     agent_request: "Exportiere die Übersetzungen, ohne weitere Aktionen auszuführen",
     action: "Übersetzungen exportieren",
     confirmation: {
-      generic_description:
-        "Dieses Projekt enthält Audio-/Videodateien oder generische Datenpakete, die AGENT verarbeiten muss und die beim direkten Export übersprungen werden …",
+      agent_description:
+        "Dieses Projekt enthält Assets, die AGENT zurückschreiben muss. Der direkte Export überspringt diese Assets …",
       description: "Die derzeit verfügbaren Übersetzungen exportieren?",
       checking: "Projektdateien und Korrekturwarnungen werden geprüft …",
       check_failed:

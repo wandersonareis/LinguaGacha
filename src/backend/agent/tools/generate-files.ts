@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { Type, type Static } from "@earendil-works/pi-ai";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import type { TranslationFileGenerationService } from "../../file/translation-file-generation-service";
 import type {
@@ -11,7 +11,10 @@ import { AGENT_WORKSPACE_WORK_ROOT } from "../workspace/runtime/policy";
 
 /** 脚本只请求生成，输出位置由宿主拥有。 */
 export const WORKSPACE_GENERATE_FILES_REQUEST_SCHEMA = Type.Object(
-  { kind: Type.Literal("generate_files"), bilingual_files: Type.Array(Type.String()) },
+  {
+    kind: Type.Literal("generate_files"),
+    bilingual_files: Type.Array(Type.String()),
+  },
   { additionalProperties: false },
 );
 export type WorkspaceGenerateFilesRequest = Static<typeof WORKSPACE_GENERATE_FILES_REQUEST_SCHEMA>;

@@ -1,5 +1,5 @@
 import type { AgentModelUsage } from "../../../domain/model";
-import { Type, type Static } from "@earendil-works/pi-ai";
+import { Type, type Static } from "typebox";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import {
   BatchRequestCompletionError,
@@ -20,16 +20,13 @@ const BATCH_LLM_REQUEST_MODEL_USAGES = [
 ] as const satisfies readonly AgentModelUsage[];
 const BATCH_LLM_REQUEST_SCHEMA = Type.Object(
   {
-    model_usage: Type.Union(
-      BATCH_LLM_REQUEST_MODEL_USAGES.map((usage) => Type.Literal(usage)),
-      {
-        description:
-          "只接受 `agent`（当前主控模型）或 `media`（音视频子模型）。翻译工程 `items` 请用 `batch_item_translation`，不要传 `translation` 或 `batch_translation`",
-      },
-    ),
+    model_usage: Type.Enum(BATCH_LLM_REQUEST_MODEL_USAGES, {
+      description: "模型用途：`agent` 当前主控模型、`media` 音视频子模型",
+    }),
     thinking_downgrade: Type.Optional(
       Type.Boolean({
-        description: "默认 `false`，设为 `true` 时降低模型思考等级",
+        description:
+          "默认设为 `false`，即保持思考等级，任务简单时设置为 `true` 以减少费用和加快速度",
       }),
     ),
     request_file: Type.String({

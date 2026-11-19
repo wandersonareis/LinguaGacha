@@ -42,7 +42,7 @@ const FILE_GENERATION_LOG_SOURCE = "translation-generation"; // 各入口共用�
 
 type GenerationTarget = Readonly<{
   paths: GeneratedFilePaths;
-  writeback_path?: string; // 提供目录时才生成通用与视频写回输入。
+  writeback_path?: string; // 提供目录时才生成 Agent 写回输入。
   skip_pdf: boolean;
   bilingual_files?: readonly string[]; // Agent 明确选择双语资产，GUI 和 CLI 沿用格式默认输出。
 }>;
@@ -222,10 +222,8 @@ export class TranslationFileGenerationService {
     setting: JsonRecord,
     target: GenerationTarget,
   ): Promise<TranslationFileGenerationResult> {
-    const config = build_project_execution_settings(
-      setting,
-      read_project_language_settings(await this.database.get_all_meta(project_path)),
-    );
+    const meta = await this.database.get_all_meta(project_path);
+    const config = build_project_execution_settings(setting, read_project_language_settings(meta));
     const all_assets = await this.database.get_all_asset_records(project_path);
     const excluded_files = all_assets
       .filter(
