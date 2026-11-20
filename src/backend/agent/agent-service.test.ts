@@ -142,6 +142,8 @@ const fake_agent_state = vi.hoisted(() => ({
     | "tools_error"
     | "pending"
     | "retry"
+    | "stream_interrupted"
+    | "stream_interrupted_always"
     | "streaming"
     | "thinking"
     | "tool_only"
@@ -434,6 +436,19 @@ function create_fake_response(context: TranscriptContext): FauxResponseStep {
     return fauxAssistantMessage([], {
       stopReason: "error",
       errorMessage: "Selected model is at capacity",
+    });
+  }
+  if (fake_agent_state.mode === "stream_interrupted") {
+    fake_agent_state.mode = "success";
+    return fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "Provider error (Test): stream interrupted",
+    });
+  }
+  if (fake_agent_state.mode === "stream_interrupted_always") {
+    return fauxAssistantMessage([], {
+      stopReason: "error",
+      errorMessage: "Provider error (Test): stream interrupted",
     });
   }
   if (fake_agent_state.mode === "thinking") {
@@ -3344,6 +3359,38 @@ describe("AgentService", () => {
       status: "success",
     });
     expect(diagnostics()).toEqual([]);
+  });
+
+  it("流式中断在公开错误前自动续跑", async () => {
+    vi.useFakeTimers();
+    const { service, diagnostics } = await create_service();
+    fake_agent_state.mode = "stream_interrupted";
+
+    await service.send_message({ text: "流中断", attachments: [] });
+    await vi.runAllTimersAsync();
+    await wait_for_idle(service);
+
+    expect(fake_agent_state.model_call_count).toBe(2);
+    expect(service.get_snapshot().entries.at(-1)).toMatchObject({
+      kind: "assistant_message",
+      status: "success",
+    });
+    expect(diagnostics()).toEqual([]);
+  });
+
+  it("三次续跑仍失败后才公开错误", async () => {
+    vi.useFakeTimers();
+    const { service } = await create_service();
+    fake_agent_state.mode = "stream_interrupted_always";
+
+    await service.send_message({ text: "重试耗尽", attachments: [] });
+    await vi.runAllTimersAsync();
+    await wait_for_idle(service);
+
+    expect(fake_agent_state.model_call_count).toBe(4);
+    expect(service.get_snapshot().entries).toContainEqual(
+      expect.objectContaining({ kind: "user_message", text: "重试耗尽", status: "error" }),
+    );
   });
 
   it("插队可取消截断恢复中的摘要，直接开启新轮次", async () => {

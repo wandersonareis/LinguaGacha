@@ -24,6 +24,7 @@ import {
   type SubmissionId,
   type TaskId,
   type TaskRecord,
+  type RunFailureReason,
 } from "@earendil-works/pi-durable";
 import type { ToolRegistration, ToolExecutionResult } from "@earendil-works/pi-durable";
 import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
@@ -70,6 +71,18 @@ import {
 } from "./tool-definition";
 
 const RETRY_SETTINGS = { enabled: true, maxRetries: 3, baseDelayMs: 2_000 };
+
+/** SDK 终止的轮次失败；原因和正文供服务层判断是否还能自动续跑。 */
+export class AgentRunFailureError extends Error {
+  public constructor(
+    public readonly reason: RunFailureReason,
+    public readonly detail: string | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentRunFailureError";
+  }
+}
 
 export type AgentSubmitOptions = {
   queuedId?: string | null | undefined;
@@ -750,8 +763,11 @@ export class AgentChat {
               if (result.status === "error") throw result.error;
             }
           }
-          throw new Error(
-            typeof unanswered.detail === "string" ? unanswered.detail : unanswered.reason,
+          const detail = typeof unanswered.detail === "string" ? unanswered.detail : undefined;
+          throw new AgentRunFailureError(
+            unanswered.reason as RunFailureReason,
+            detail,
+            detail === undefined ? unanswered.reason : detail,
           );
         }
         const recovery = execution.recoveryTask;

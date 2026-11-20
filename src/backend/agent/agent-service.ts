@@ -25,10 +25,16 @@ import { prepare_agent_message, type PreparedAgentMessage } from "./agent-messag
 import { BatchTranslationCompletionError } from "../batch-translation/batch-translation-state";
 import type { Model } from "../../domain/model";
 import { create_agent_batch_item_translation_tool } from "./tools/batch-item-translation";
-import { type AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { isRetryableAssistantError } from "@earendil-works/pi-ai/compat";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { isDeepStrictEqual } from "node:util";
-import { AgentChat, type AgentExecution, type AgentSubmitOptions } from "./agent-chat";
+import {
+  AgentChat,
+  AgentRunFailureError,
+  type AgentExecution,
+  type AgentSubmitOptions,
+} from "./agent-chat";
 
 import { resolve_app_locale } from "../../domain/app-language";
 import { is_json_record, type JsonRecord } from "../../domain/json";
@@ -84,6 +90,23 @@ import { AgentRuntimeLog, type AgentStopReason, type AgentLogStatus } from "./ag
 const AGENT_TOKEN_SPEED_PUBLISH_INTERVAL_MS = 250;
 const AGENT_TOKEN_SPEED_DECIMAL_PLACES = 2;
 const AGENT_WORKSPACE_CONTRACT_PROMPT = format_agent_workspace_contract_prompt();
+const AGENT_RUN_RETRY_LIMIT = 3; // 自动续跑次数与 SDK 的单请求重试保持一致。
+const AGENT_RUN_RETRY_BASE_DELAY_MS = 2_000;
+const AGENT_RUN_RETRY_MAX_DELAY_MS = 8_000;
+// SDK 已覆盖多数网络错误，这里补齐其文本分类遗漏的流中断说法。
+const AGENT_TRANSIENT_FAILURE_PATTERN =
+  /stream interrupted|stream stalled|no data for|unexpected end of stream/iu;
+
+/** 只有模型或传输终态才允许自动续跑；授权、配额、内容和工具错误交给用户处理。 */
+function is_transient_agent_failure(error: unknown): boolean {
+  if (!(error instanceof AgentRunFailureError)) return false;
+  if (error.reason !== "model_error" && error.reason !== "faulted") return false;
+  const detail = error.detail ?? error.message;
+  return (
+    AGENT_TRANSIENT_FAILURE_PATTERN.test(detail) ||
+    isRetryableAssistantError({ stopReason: "error", errorMessage: detail } as AssistantMessage)
+  );
+}
 
 type AgentServicePaths = Pick<
   AppPathService,
@@ -987,12 +1010,57 @@ export class AgentService {
       const execution = run.execution;
       let status: AgentLogStatus = "success";
       let failure: unknown;
-      try {
-        await chat.run(accepted, execution);
-        if (execution.controller.signal.aborted) status = "stopped";
-      } catch (error) {
-        status = is_agent_cancellation(error, execution.controller.signal) ? "stopped" : "error";
-        if (status === "error") failure = error;
+      for (let attempt = 0; ; attempt += 1) {
+        status = "success";
+        failure = undefined;
+        try {
+          await chat.run(accepted, execution);
+          if (execution.controller.signal.aborted) status = "stopped";
+        } catch (error) {
+          status = is_agent_cancellation(error, execution.controller.signal) ? "stopped" : "error";
+          if (status === "error") failure = error;
+        }
+        if (
+          status !== "error" ||
+          failure === undefined ||
+          execution.controller.signal.aborted ||
+          attempt >= AGENT_RUN_RETRY_LIMIT ||
+          !is_transient_agent_failure(failure)
+        )
+          break;
+        const retry_attempt = attempt + 1;
+        this.log_manager.append({
+          level: "warning",
+          source: "agent",
+          content: format_i18n_message(
+            resolve_app_locale(this.settings.read_setting()["app_language"]),
+            "app.log.agent_retry",
+            { ATTEMPT: String(retry_attempt), LIMIT: String(AGENT_RUN_RETRY_LIMIT) },
+          ),
+        });
+        try {
+          await this.wait_agent_retry(execution, retry_attempt);
+          execution.phase = "running";
+          accepted = await chat.continue_round(execution, (state) => {
+            const round_id = execution.roundId;
+            if (round_id === null) return;
+            const previous = state.rounds[round_id];
+            if (previous === undefined) return;
+            previous.status = "running";
+            previous.endedAt = null;
+            previous.averageTokensPerSecond = null;
+            previous.modelId = chat.model?.id ?? null;
+          });
+          this.publish_snapshot();
+        } catch (error) {
+          if (is_agent_cancellation(error, execution.controller.signal)) {
+            status = "stopped";
+            failure = undefined;
+          } else {
+            failure = error;
+          }
+          break;
+        }
       }
       chat.log.finish_run(status, {
         ...(status === "stopped" && execution.stop_reason !== null
@@ -1054,6 +1122,34 @@ export class AgentService {
       this.publish_snapshot();
       following_failure = selected === null && status === "error";
     }
+  }
+
+  /** 自动续跑前等待可取消的退避，停止信号优先于计时器。 */
+  private wait_agent_retry(execution: AgentExecution, attempt: number): Promise<void> {
+    const delay = Math.min(
+      AGENT_RUN_RETRY_MAX_DELAY_MS,
+      AGENT_RUN_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    );
+    const signal = execution.controller.signal;
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason ?? new AppErrors.AppError("runtime.cancelled"));
+        return;
+      }
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, delay);
+      const abort = (): void => {
+        cleanup();
+        reject(signal.reason ?? new AppErrors.AppError("runtime.cancelled"));
+      };
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+    });
   }
 
   /** 一次提交归还占用并暂停队列，保证重连读取同一份清理结果。 */

@@ -287,6 +287,8 @@ export const pt_br_app = {
     request_timeout: "Tempo limite da requisição de rede esgotado",
     request_retry_exhausted:
       "O modelo não respondeu após {COUNT} tentativas consecutivas. A tarefa foi encerrada …",
+    agent_retry:
+      "A requisição do agente falhou com um erro transitório. Tentando novamente ({ATTEMPT}/{LIMIT}) …",
     batch_translation_ended: "Tarefa de tradução em lote encerrada …",
     batch_request_ended: "Tarefa de requisições em lote encerrada …",
     api_test_key: "Chave em teste:",

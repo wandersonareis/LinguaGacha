@@ -277,6 +277,7 @@ export const zh_cn_app = {
     request_key_failed: "请求失败 - Key {KEY}：{ERROR}",
     request_timeout: "网络请求超时",
     request_retry_exhausted: "连续 {COUNT} 次请求无响应，任务已结束 …",
+    agent_retry: "Agent 请求出现临时错误，正在重试（{ATTEMPT}/{LIMIT}）…",
     batch_translation_ended: "批量翻译任务已结束 …",
     batch_request_ended: "批量请求任务已结束 …",
     api_test_key: "正在测试密钥：",
