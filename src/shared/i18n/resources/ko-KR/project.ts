@@ -26,6 +26,11 @@ export const ko_kr_project = {
       post_translation_replacement: "번역 후 치환",
       translation_prompt: "번역 프롬프트",
     },
+    project_name: {
+      title: "프로젝트 이름",
+      description: "비워 두면 자동으로 생성된 이름을 사용합니다",
+      invalid: "이름에 사용할 수 없는 문자 또는 시스템 예약 이름이 있습니다",
+    },
     action: "프로젝트 만들기",
   },
   open: {

@@ -43,6 +43,11 @@ export const zh_cn_project = {
       post_translation_replacement: "译后替换",
       translation_prompt: "翻译提示词",
     },
+    project_name: {
+      title: "工程名称",
+      description: "留空时使用自动生成的名称",
+      invalid: "名称包含无效字符，或使用了系统保留名称",
+    },
     action: "创建工程",
   },
   open: {

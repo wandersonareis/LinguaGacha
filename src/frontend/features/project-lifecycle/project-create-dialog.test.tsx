@@ -8,7 +8,7 @@ import type { useProjectCreateFlow } from "./use-project-create-flow";
 
 const t = create_text_resolver("zh-CN");
 
-it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍可见并使用对应标题", async (open) => {
+it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍可见并使用创建标题", async (open) => {
   const confirm = vi.fn();
   const flow: ReturnType<typeof useProjectCreateFlow> = {
     open,
@@ -20,10 +20,12 @@ it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍�
     source_selection_disabled: false,
     is_language_dialog_open: true,
     create_languages: { source_language: "JA", target_language: "ZH" },
+    create_project_name: "demo",
+    project_name_invalid: false,
     confirm_language_dialog: confirm,
     close: vi.fn(),
     show: vi.fn(),
-    start_from_paths: vi.fn(),
+    start_from_paths: vi.fn(async () => {}),
     clear_selected_source: vi.fn(),
     handle_select_source_file: vi.fn(),
     handle_select_source_folder: vi.fn(),
@@ -31,6 +33,7 @@ it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍�
     handle_drop_issue: vi.fn(),
     open_language_dialog: vi.fn(),
     set_create_languages: vi.fn(),
+    set_create_project_name: vi.fn(),
     set_is_language_dialog_open: vi.fn(),
     pack_order: {
       dialog_props: { games: [], on_reorder: vi.fn(), on_confirm: vi.fn(), on_close: vi.fn() },
@@ -60,12 +63,25 @@ it.each([true, false])("创建对话框打开状态为 %s 时，语言确认仍�
         </LocaleProvider>,
       ),
     );
-    const title = t(open ? "project.language.title" : "project.create.title");
+    const title = t("project.create.title");
     const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (element) =>
-        document.getElementById(element.getAttribute("aria-labelledby")!)?.textContent === title,
+      (element) => element.querySelector("input") !== null,
     );
     expect(dialog).toBeDefined();
+    expect(document.getElementById(dialog!.getAttribute("aria-labelledby")!)?.textContent).toBe(
+      title,
+    );
+    const name_input = dialog!.querySelector<HTMLInputElement>("input");
+    expect(name_input?.value).toBe("demo");
+    await act(async () => {
+      const value_setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      value_setter?.call(name_input, "outro");
+      name_input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(flow.set_create_project_name).toHaveBeenCalledWith("outro");
     const button = [...dialog!.querySelectorAll("button")].find((element) =>
       element.textContent?.startsWith(t("app.action.confirm")),
     );

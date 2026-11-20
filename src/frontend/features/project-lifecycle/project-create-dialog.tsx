@@ -27,8 +27,13 @@ export function ProjectCreateDialog(props: {
   const language_dialog = (
     <ProjectLanguageDialog
       open={flow.is_language_dialog_open}
-      title={flow.open ? undefined : t("project.create.title")}
+      title={t("project.create.title")}
       languages={flow.create_languages}
+      name_field={{
+        value: flow.create_project_name,
+        invalid: flow.project_name_invalid,
+        on_change: flow.set_create_project_name,
+      }}
       on_change={(field, value) =>
         flow.set_create_languages((previous) => ({ ...previous, [field]: value }))
       }

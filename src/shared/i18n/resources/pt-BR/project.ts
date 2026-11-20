@@ -47,6 +47,11 @@ export const pt_br_project = {
       post_translation_replacement: "Substituição pós-tradução",
       translation_prompt: "Prompt de tradução",
     },
+    project_name: {
+      title: "Nome do projeto",
+      description: "Deixe vazio para usar o nome gerado automaticamente",
+      invalid: "O nome contém caracteres inválidos ou um nome reservado do sistema",
+    },
     action: "Criar projeto",
   },
   open: {

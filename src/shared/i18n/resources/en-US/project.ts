@@ -48,6 +48,11 @@ export const en_us_project = {
       post_translation_replacement: "Post-translation replacement",
       translation_prompt: "Translation prompt",
     },
+    project_name: {
+      title: "Project name",
+      description: "Leave empty to use the generated name",
+      invalid: "The name contains invalid characters or a reserved system name",
+    },
     action: "Create project",
   },
   open: {

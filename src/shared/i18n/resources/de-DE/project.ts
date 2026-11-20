@@ -28,6 +28,11 @@ export const de_de_project = {
       post_translation_replacement: "Ersetzung nach Übersetzung",
       translation_prompt: "Übersetzungs-Prompt",
     },
+    project_name: {
+      title: "Projektname",
+      description: "Leer lassen, um den automatisch generierten Namen zu verwenden",
+      invalid: "Der Name enthält ungültige Zeichen oder einen reservierten Systemnamen",
+    },
     action: "Projekt erstellen",
   },
   open: {

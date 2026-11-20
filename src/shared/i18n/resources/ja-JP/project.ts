@@ -26,6 +26,11 @@ export const ja_jp_project = {
       post_translation_replacement: "翻訳後置換",
       translation_prompt: "翻訳プロンプト",
     },
+    project_name: {
+      title: "プロジェクト名",
+      description: "空欄の場合は自動生成された名前を使用します",
+      invalid: "名前に使用できない文字が含まれているか、システム予約名です",
+    },
     action: "プロジェクトを作成",
   },
   open: {
