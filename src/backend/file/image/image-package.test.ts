@@ -1,57 +1,30 @@
 import JSZip from "jszip";
 import { expect, it } from "vitest";
 
-import { image_fixture, layout_area_fixture, patch_fixture } from "../../../test/image-fixture";
+import { image_fixture } from "../../../test/image-fixture";
 import { read_image_package } from "./image-package";
 
-it("成员不匹配同时报告缺失与多余路径", async () => {
-  const fixture = image_fixture(["page"]);
-  const archive = await JSZip.loadAsync(await fixture.pack());
-  archive.remove("patches/page/text.png");
-  archive.file("extra.png", fixture.patch);
-  await expect(
-    read_image_package(await archive.generateAsync({ type: "uint8array" }), "bad.image"),
-  ).rejects.toMatchObject({
-    cause: {
-      message: expect.stringMatching(/missing 1.*patches\/page\/text\.png.*extra 1.*extra\.png/u),
-    },
-  });
-});
-
-it("拒绝含灰度像素的可写掩码", async () => {
+it("入库要求补丁掩码存在且没有额外文件", async () => {
   const archive = await JSZip.loadAsync(await image_fixture(["page"]).pack());
-  archive.file("layout-areas/page/text.png", layout_area_fixture(128));
-  await expect(
-    read_image_package(await archive.generateAsync({ type: "uint8array" }), "bad.image"),
-  ).rejects.toThrow("layout area must be binary");
+  const mask = "patch-masks/page/text.png";
+  const bytes = await archive.file(mask)!.async("uint8array");
+  const read = async () =>
+    read_image_package(await archive.generateAsync({ type: "uint8array" }), "book.image");
+  archive.remove(mask);
+  await expect(read()).rejects.toThrow(mask);
+  archive.file(mask, bytes);
+  archive.file("extra.png", bytes);
+  await expect(read()).rejects.toThrow("extra.png");
 });
 
-it("超额成员声明在解压前拒绝", async () => {
-  const oversized = Buffer.from(await image_fixture(["page1", "page2"]).pack());
-  const directory = oversized.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])); // 定位中央目录首条记录签名。
-  oversized.writeUInt32LE(1_000_000_000, directory + 24); // 偏移 +24 为未压缩体积字段。
-  await expect(read_image_package(oversized, "oversized.image")).rejects.toMatchObject({
-    code: "file.asset_too_large",
-  });
-});
-
-it.each(["box", "patch"] as const)("拒绝超出页面的 %s", async (kind) => {
+it("入库读取 AVIF 原图清单，像素解码由工作区负责", async () => {
   const fixture = image_fixture(["page"]);
-  const region = fixture.book.pages[0]!.regions[0]!;
-  const box = kind === "box" ? region.box : region.patch!.box;
-  box[0] = 1;
-  await expect(read_image_package(await fixture.pack(), "bad.image")).rejects.toThrow(
-    "Image region bounds exceed page",
-  );
-});
-
-it.each([
-  [patch_fixture([128]), "alpha must be binary"],
-  [patch_fixture([255, 0]), "matching its box"],
-])("拒绝补丁像素或尺寸不符的归档", async (invalid, reason) => {
-  const archive = await JSZip.loadAsync(await image_fixture(["page"]).pack());
-  archive.file("patches/page/text.png", invalid);
-  await expect(
-    read_image_package(await archive.generateAsync({ type: "uint8array" }), "bad.image"),
-  ).rejects.toThrow(reason);
+  Object.assign(fixture.book.pages[0]!, {
+    original: "originals/page.avif",
+    relativePath: "page.avif",
+  });
+  await expect(read_image_package(await fixture.pack(), "book.image")).resolves.toEqual({
+    book: fixture.book,
+    records: fixture.records,
+  });
 });

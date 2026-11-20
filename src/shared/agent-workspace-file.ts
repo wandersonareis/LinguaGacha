@@ -58,5 +58,6 @@ export function resolve_agent_file_href(href: string, document_path = ""): strin
       parts.pop();
     } else parts.push(part);
   }
-  return `${parts.map(encodeURIComponent).join("/")}${decoded.endsWith("/") ? "/" : ""}${suffix}`;
+  const resolved_path = parts.map(encodeURIComponent).join("/") || "."; // 工作区根目录需要可再次打开的地址。
+  return `${resolved_path}${decoded.endsWith("/") ? "/" : ""}${suffix}`;
 }

@@ -5,44 +5,29 @@ import {
   read_image_book,
   read_image_records,
   type ImageBook,
-  type ImagePage,
 } from "../../../shared/image-package";
 import { AppError } from "../../../shared/error";
 import { default_native_fs as fs } from "../../../native/native-fs";
 import { PACKAGE_ITEMS_MEMBER, read_package_items } from "../shared/package-items";
 import { read_zip_members } from "../shared/zip-members";
-import { image_metadata } from "./image-metadata";
 
 export const IMAGE_STATE_MEMBER = "image.json"; // 编辑与归档共用同一个清单成员。
-const MEMBER_ERROR_SAMPLE_SIZE = 5; // 成员不一致时只展示少量路径。
-const IMAGE_LIMITS = Object.freeze({
-  members: 30000,
-  expandedBytes: 950_000_000,
-  memberBytes: 256_000_000,
-  jsonBytes: 16_000_000,
-}); // 图片包可能很大，解压前限制声明体积。
 
-/** 导入核对成员像素，读取已入库原稿时直接复用导入结果。 */
+/** 入库时核对成员集合，已入库资产只读取清单。 */
 export async function read_image_package(
   content: Uint8Array,
   file: string,
   { stored = false }: { stored?: boolean } = {},
 ) {
+  const members = await read_zip_members(content, file);
   try {
-    if (!stored) validate_zip_budget(content);
-    const members = await read_zip_members(content, file);
     const stateMember = members.get(IMAGE_STATE_MEMBER);
     if (!stateMember) throw new Error("Missing image.json");
     const records = read_image_records(await read_package_items(members));
     const book = read_image_book(JSON.parse(await stateMember.async("string")), records);
-    if (!stored) {
-      validate_image_members(book, members.keys());
-      for (const page of book.pages)
-        await validate_image_page_members(page, (name) => members.get(name)!.async("uint8array"));
-    }
+    if (!stored) validate_image_members(book, members.keys());
     return { book, records };
   } catch (cause) {
-    if (cause instanceof AppError && cause.code === "file.asset_too_large") throw cause;
     throw new AppError("file.invalid_structure", { cause, public_details: { file } });
   }
 }
@@ -54,150 +39,20 @@ export function read_image_package_manifest(directory: string) {
   return { book, records };
 }
 
-/** 先核对成员全集，使像素校验只读取清单声明的成员。 */
+/** 核对声明成员齐全，包内只保存清单引用的文件。 */
 function validate_image_members(book: ImageBook, actualMembers: Iterable<string>): void {
-  const expected = new Set<string>([
-    PACKAGE_ITEMS_MEMBER,
-    IMAGE_STATE_MEMBER,
-    ...book.pages.flatMap((page) => [
-      page.original,
-      ...page.regions.flatMap(({ regionId, parts, patch }) => [
-        ...(parts ? [] : [image_layout_area_path(page.pageId, regionId)]),
-        ...(patch ? [patch.path] : []),
-      ]),
-    ]),
-  ]);
-  const actual = new Set(actualMembers);
-  const missing = [...expected].filter((name) => !actual.has(name));
-  const extra = [...actual].filter((name) => !expected.has(name));
-  if (missing.length || extra.length)
-    throw new Error(
-      `Image members mismatch: missing ${missing.length} ${JSON.stringify(missing.slice(0, MEMBER_ERROR_SAMPLE_SIZE))}; extra ${extra.length} ${JSON.stringify(extra.slice(0, MEMBER_ERROR_SAMPLE_SIZE))}`,
-    );
-}
-
-/** 核对原图与像素成员各自的坐标尺寸。 */
-async function validate_image_page_members(
-  page: ImagePage,
-  read: (member: string) => Promise<Uint8Array>,
-): Promise<void> {
-  const original = image_metadata(await read(page.original));
-  if (
-    original.width !== page.width ||
-    original.height !== page.height ||
-    original.orientation !== page.orientation
-  )
-    throw new Error("Image metadata mismatch");
-  for (const { regionId, box, parts, patch } of page.regions) {
-    if (!parts) {
-      const bytes = await read(image_layout_area_path(page.pageId, regionId));
-      const metadata = image_metadata(bytes);
-      if (
-        metadata.extension !== ".png" ||
-        metadata.width !== box[2] ||
-        metadata.height !== box[3] ||
-        metadata.orientation !== 1 ||
-        bytes[24] !== 8 ||
-        bytes[25] !== 0
-      )
-        throw new Error("Image layout area must be an 8-bit grayscale PNG matching its box");
-      await validate_binary_pixels(bytes, box[2], box[3], "layout area");
+  const expected = new Set([PACKAGE_ITEMS_MEMBER, IMAGE_STATE_MEMBER]);
+  for (const { pageId, original, regions } of book.pages) {
+    expected.add(original);
+    for (const { regionId, parts, patch } of regions) {
+      if (!parts) expected.add(image_layout_area_path(pageId, regionId));
+      if (patch) expected.add(patch.path).add(patch.mask);
     }
-    if (!patch) continue;
-    const bytes = await read(patch.path);
-    const metadata = image_metadata(bytes);
-    const [, , width, height] = patch.box;
-    if (
-      metadata.extension !== ".png" ||
-      metadata.width !== width ||
-      metadata.height !== height ||
-      metadata.orientation !== 1 ||
-      bytes[24] !== 8 ||
-      bytes[25] !== 6
-    )
-      throw new Error("Image patch must be an 8-bit RGBA PNG matching its box");
-    await validate_binary_pixels(bytes, width, height, "patch alpha");
   }
-}
-
-/** 掩码取灰度，补丁取 alpha。两者都只允许二值。 */
-async function validate_binary_pixels(
-  bytes: Uint8Array,
-  width: number,
-  height: number,
-  channel: "layout area" | "patch alpha",
-): Promise<void> {
-  const { Image } = await import("mupdf");
-  const image = new Image(bytes);
-  try {
-    const pixels = image.toPixmap();
-    try {
-      const alpha = channel === "patch alpha";
-      if (
-        pixels.getWidth() !== width ||
-        pixels.getHeight() !== height ||
-        Boolean(pixels.getAlpha()) !== alpha
-      )
-        throw new Error(`Invalid decoded image ${channel}`);
-      const data = pixels.getPixels();
-      const components = pixels.getNumberOfComponents();
-      let nonempty = false;
-      for (let offset = components - 1; offset < data.length; offset += components) {
-        if (data[offset] === 255) nonempty = true;
-        else if (data[offset] !== 0) throw new Error(`Image ${channel} must be binary`);
-      }
-      if (!alpha && !nonempty) throw new Error("Image layout area is empty");
-    } finally {
-      pixels.destroy();
-    }
-  } finally {
-    image.destroy();
-  }
-}
-
-/** 原中央目录只检查图片包仍需要的展开预算。 */
-function validate_zip_budget(content: Uint8Array): void {
-  const bytes = Buffer.from(content.buffer, content.byteOffset, content.byteLength);
-  let end = bytes.length - 22;
-  for (; end >= Math.max(0, bytes.length - 65557); end--)
-    if (
-      bytes.readUInt32LE(end) === 0x06054b50 &&
-      end + 22 + bytes.readUInt16LE(end + 20) === bytes.length
-    )
-      break;
-  if (end < 0 || bytes.readUInt16LE(end + 4) !== 0 || bytes.readUInt16LE(end + 6) !== 0)
-    throw new Error("Invalid ZIP directory");
-  const count = bytes.readUInt16LE(end + 10);
-  let offset = bytes.readUInt32LE(end + 16);
-  let total = 0;
-  if (
-    count > IMAGE_LIMITS.members ||
-    count !== bytes.readUInt16LE(end + 8) ||
-    offset + bytes.readUInt32LE(end + 12) !== end
-  )
-    throw new Error("Unsupported ZIP directory");
-  const jsonMembers = new Set([IMAGE_STATE_MEMBER, PACKAGE_ITEMS_MEMBER]);
-  for (let index = 0; index < count; index++) {
-    if (offset + 46 > end || bytes.readUInt32LE(offset) !== 0x02014b50)
-      throw new Error("Invalid ZIP entry");
-    const size = bytes.readUInt32LE(offset + 24);
-    const length = bytes.readUInt16LE(offset + 28);
-    const next =
-      offset + 46 + length + bytes.readUInt16LE(offset + 30) + bytes.readUInt16LE(offset + 32);
-    if (next > end) throw new Error("Unsupported ZIP entry");
-    const name = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.subarray(offset + 46, offset + 46 + length),
-    );
-    total += size;
-    if (
-      size > IMAGE_LIMITS.memberBytes ||
-      total > IMAGE_LIMITS.expandedBytes ||
-      (jsonMembers.has(name.replace(/\/$/u, "").toLowerCase()) && size > IMAGE_LIMITS.jsonBytes)
-    )
-      throw new AppError("file.asset_too_large");
-    offset = next;
-  }
-  if (offset !== end) throw new Error("Invalid ZIP directory size");
+  for (const name of actualMembers)
+    if (!expected.delete(name)) throw new Error(`Unexpected image member: ${name}`);
+  const [missing] = expected;
+  if (missing) throw new Error(`Missing image member: ${missing}`);
 }
 
 /** 当前 JSON 使用 UTF-8，解析错误由调用边界归类。 */
