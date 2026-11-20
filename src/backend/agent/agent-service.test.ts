@@ -4006,7 +4006,7 @@ describe("AgentService", () => {
       message: { text: "第三轮", attachments: [] },
     });
     await wait_for_idle(service);
-    expect(fake_agent_state.prompts.slice(-2)).toEqual(["第二轮", "第三轮"]);
+    expect(fake_agent_state.prompts.slice(-3)).toEqual(["第二轮", "第三轮", "继续"]);
     expect(service.get_snapshot().inputQueue.items).toEqual([]);
   });
 
@@ -4069,7 +4069,37 @@ describe("AgentService", () => {
       ["第二轮", "error"],
       ["第三轮", "success"],
     ]);
-    expect(fake_agent_state.prompts.at(-1)).toBe("第三轮");
+    expect(fake_agent_state.prompts.slice(-2)).toEqual(["第三轮", "继续"]);
+  });
+
+  it("空闲时发送队列项会先清空剩余草稿，再自动回到未完成的轮次", async () => {
+    const { service, runtime_gate } = await create_service();
+    fake_agent_state.mode = "pending";
+    await service.send_message({ text: "第一轮", attachments: [] });
+    await service.send_message({ text: "第二轮", attachments: [] });
+    await service.send_message({ text: "第三轮", attachments: [] });
+    await vi.waitFor(() => expect(fake_agent_state.release_pending).not.toBeNull());
+    await service.stop();
+    await vi.waitFor(() => expect(runtime_gate.get_snapshot().owner).toBeNull());
+    expect(service.get_snapshot().inputQueue).toMatchObject({
+      paused: true,
+      items: [{ text: "第二轮" }, { text: "第三轮" }],
+    });
+
+    fake_agent_state.mode = "success";
+    const selected = service.get_snapshot().inputQueue.items[1]!;
+    await service.send_queued_message({ id: selected.id });
+    await wait_for_idle(service);
+
+    expect(fake_agent_state.prompts).toEqual(["第一轮", "第三轮", "第二轮", "继续"]);
+    expect(service.get_snapshot().inputQueue.items).toEqual([]);
+    expect(service.get_snapshot().entries.at(-1)).toMatchObject({ kind: "assistant_message" });
+    expect(
+      service
+        .get_snapshot()
+        .entries.filter((entry) => entry.kind === "user_message")
+        .map((entry) => entry.text),
+    ).toEqual(["第一轮", "第三轮", "第二轮"]);
   });
 
   it("插队立即取消活动工具，收尾后在同一租约内优先发送选中消息", async () => {
@@ -4120,7 +4150,11 @@ describe("AgentService", () => {
     });
     expect(owners).toEqual([null]);
     expect(service.get_snapshot().inputQueue.items).toEqual([]);
-    expect(fake_agent_state.prompts).toEqual(["第一轮", "插队消息", "普通队列"]);
+    expect(fake_agent_state.prompts).toEqual(["第一轮", "插队消息", "普通队列", "继续"]);
+    // 剩余草稿清空前提示模型先处理队列，清空后不再提示。
+    expect(fake_agent_state.system_prompts[1]).toContain("还有 1 条排队消息");
+    expect(fake_agent_state.system_prompts[2]).toContain("最后一条排队消息");
+    expect(fake_agent_state.system_prompts[3]).not.toContain("输入队列");
     expect(
       service.get_snapshot().entries.filter((entry) => entry.kind === "user_message"),
     ).toMatchObject([
@@ -4212,42 +4246,50 @@ describe("AgentService", () => {
     expect(execution.config_snapshot["model_selection"]).toMatchObject({ agent_media: id });
   });
 
-  it.each([null, "next"])("批量翻译按保存偏好 %s 直接执行，未指定时沿用翻译模型", async (model_id) => {
-    fake_agent_state.batch_mode = true;
-    const run = vi.fn<
-      import("../batch-translation/batch-translation-service").BatchTranslationService["run_under_agent"]
-    >(async () => ({ status: "done", progress: normalize_batch_translation_progress({}) }));
-    const { service, select_agent_model, select_batch_translation_model } = await create_service({
-      batch_translation: { run_under_agent: run },
-    });
-    select_batch_translation_model(model_id);
-    await service.send_message({ text: "执行翻译", attachments: [] });
-    await wait_for_idle(service);
-    expect(run).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.any(AbortSignal),
-      expect.objectContaining(
-        model_id === null
-          ? { id: "active", model_id: "test-model", api_key: "secret", thinking: { level: "OFF" } }
-          : {
-              id: "next",
-              model_id: "next-model",
-              api_key: "next-secret",
-              thinking: { level: "HIGH" },
-            },
-      ),
-      { item_statuses: ["NONE"] },
-    );
-    expect(service.get_snapshot().pendingDecision).toBeNull();
-    select_agent_model("next");
-    await service.send_message({ text: "继续翻译", attachments: [] });
-    await wait_for_idle(service);
-    expect(run).toHaveBeenCalledTimes(2);
-    // 未指定批量模型时始终跟随翻译模型，不再随主控模型切换。
-    expect(run.mock.calls.at(-1)?.[2]).toMatchObject(
-      model_id === null ? { id: "active" } : { id: "next" },
-    );
-  });
+  it.each([null, "next"])(
+    "批量翻译按保存偏好 %s 直接执行，未指定时沿用翻译模型",
+    async (model_id) => {
+      fake_agent_state.batch_mode = true;
+      const run = vi.fn<
+        import("../batch-translation/batch-translation-service").BatchTranslationService["run_under_agent"]
+      >(async () => ({ status: "done", progress: normalize_batch_translation_progress({}) }));
+      const { service, select_agent_model, select_batch_translation_model } = await create_service({
+        batch_translation: { run_under_agent: run },
+      });
+      select_batch_translation_model(model_id);
+      await service.send_message({ text: "执行翻译", attachments: [] });
+      await wait_for_idle(service);
+      expect(run).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.any(AbortSignal),
+        expect.objectContaining(
+          model_id === null
+            ? {
+                id: "active",
+                model_id: "test-model",
+                api_key: "secret",
+                thinking: { level: "OFF" },
+              }
+            : {
+                id: "next",
+                model_id: "next-model",
+                api_key: "next-secret",
+                thinking: { level: "HIGH" },
+              },
+        ),
+        { item_statuses: ["NONE"] },
+      );
+      expect(service.get_snapshot().pendingDecision).toBeNull();
+      select_agent_model("next");
+      await service.send_message({ text: "继续翻译", attachments: [] });
+      await wait_for_idle(service);
+      expect(run).toHaveBeenCalledTimes(2);
+      // 未指定批量模型时始终跟随翻译模型，不再随主控模型切换。
+      expect(run.mock.calls.at(-1)?.[2]).toMatchObject(
+        model_id === null ? { id: "active" } : { id: "next" },
+      );
+    },
+  );
 
   it("跟随批量调用默认降到最低可用等级", async () => {
     fake_agent_state.batch_mode = true;
