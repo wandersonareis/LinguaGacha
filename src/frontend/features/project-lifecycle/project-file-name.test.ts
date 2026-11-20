@@ -35,12 +35,9 @@ describe("is_project_name_valid", () => {
     expect(is_project_name_valid(value)).toBe(false);
   });
 
-  it.each(["CON", "con", "NUL.txt", "COM1", "LPT9.dados"])(
-    "拒绝 Windows 保留名称 %j",
-    (value) => {
-      expect(is_project_name_valid(value)).toBe(false);
-    },
-  );
+  it.each(["CON", "con", "NUL.txt", "COM1", "LPT9.dados"])("拒绝 Windows 保留名称 %j", (value) => {
+    expect(is_project_name_valid(value)).toBe(false);
+  });
 });
 
 describe("build_project_file_name", () => {

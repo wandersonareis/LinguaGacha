@@ -362,4 +362,3 @@ it("工程名包含无效字符时不提交创建", async () => {
   expect(mocks.api).not.toHaveBeenCalledWith("/api/session/project/create", expect.anything());
   expect(mocks.loaded).not.toHaveBeenCalled();
 });
-

@@ -163,9 +163,7 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
   const [create_project_name, set_create_project_name] = useState(() =>
     build_default_project_name(undefined),
   );
-  const project_name_invalid = !is_project_name_valid(
-    normalize_project_name(create_project_name),
-  );
+  const project_name_invalid = !is_project_name_valid(normalize_project_name(create_project_name));
   const [open, set_open] = useState(false);
   const [format_catalog, set_format_catalog] = useState<FormatPluginCatalog>({
     formats: BUILTIN_FORMAT_CATALOG,
