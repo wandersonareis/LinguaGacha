@@ -23,7 +23,7 @@ export function ProjectLifecycleProvider(props: { children: ReactNode }): JSX.El
           if (!busy) create.show();
         },
         create_from_paths: (paths) => {
-          if (!busy) create.start_from_paths(paths);
+          if (!busy) void create.start_from_paths(paths);
         },
         request_open: (path) => {
           if (!busy) void open.open_project(path);

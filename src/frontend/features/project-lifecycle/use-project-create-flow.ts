@@ -29,6 +29,11 @@ import {
   read_project_language_preference,
   save_project_language_preference,
 } from "./project-language-preference";
+import {
+  build_project_file_name,
+  is_project_name_valid,
+  normalize_project_name,
+} from "./project-file-name";
 import type { RunProjectLoad } from "./use-project-load";
 /** 已选择的源路径与后端摘要，后端提供默认工程名。 */
 type SelectedSource = ProjectSourceFileSummary & {
@@ -75,11 +80,11 @@ function join_path(directory_path: string, file_name: string): string {
   return `${normalized_directory}${path_separator}${file_name}`;
 }
 
-/** 有来源时沿用源名称，空工程使用本地时间生成默认 `.lg` 文件名。 */
-function build_default_project_file_name(project_name: string | undefined): string {
-  if (project_name) return `${project_name}.lg`;
+/** 有来源时沿用源名称，空工程使用本地时间生成默认工程名（不含扩展名）。 */
+function build_default_project_name(project_name: string | undefined): string {
+  if (project_name) return project_name;
   const timestamp = format_local_timestamp(new Date().toISOString())!;
-  return `lg_project_${timestamp.replace(/[-:]/gu, "").replace(" ", "_")}.lg`;
+  return `lg_project_${timestamp.replace(/[-:]/gu, "").replace(" ", "_")}`;
 }
 
 /** 源文件格式命中数归一为非负整数，供格式标签展示。 */
@@ -154,6 +159,13 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
   const [create_languages, set_create_languages] = useState<ProjectLanguageDraft>(
     read_project_language_preference,
   );
+  // 工程名草稿只在创建流程内使用，取消或失败后保留输入。
+  const [create_project_name, set_create_project_name] = useState(() =>
+    build_default_project_name(undefined),
+  );
+  const project_name_invalid = !is_project_name_valid(
+    normalize_project_name(create_project_name),
+  );
   const [open, set_open] = useState(false);
   const [format_catalog, set_format_catalog] = useState<FormatPluginCatalog>({
     formats: BUILTIN_FORMAT_CATALOG,
@@ -162,9 +174,10 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
   });
   const source_selection_disabled = is_source_checking || is_creating_project; // 摘要与创建共用来源快照，期间冻结所有编辑入口。
 
-  /** 清空本次创建的来源选择。 */
+  /** 清空本次创建的来源选择，并恢复空工程的自动工程名。 */
   function clear_selected_source(): void {
     set_selected_source(null);
+    set_create_project_name(build_default_project_name(undefined));
   }
 
   /** 插件目录在对话框打开前读取；失败时保留内置目录。 */
@@ -196,6 +209,7 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     const normalized_source_paths = normalize_source_paths(source_paths);
     if (normalized_source_paths.length === 0) {
       set_selected_source(null);
+      set_create_project_name(build_default_project_name(undefined));
       push_toast("warning", t("project.create.unavailable"));
       return;
     }
@@ -213,19 +227,23 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
 
       if (source_file_count === 0) {
         set_selected_source(null);
+        set_create_project_name(build_default_project_name(undefined));
         push_toast("warning", t("project.create.unavailable"));
       } else {
+        const project_name = typeof payload.project_name === "string" ? payload.project_name : "";
         set_selected_source({
           source_paths: normalized_source_paths,
           godot_packs: Array.isArray(payload.godot_packs) ? payload.godot_packs : [],
-          project_name: typeof payload.project_name === "string" ? payload.project_name : "",
+          project_name,
           contains_game: payload.contains_game === true,
           source_file_count,
           format_hit_counts: normalize_project_source_format_hit_counts(payload.format_hit_counts),
         });
+        set_create_project_name(build_default_project_name(project_name));
       }
     } catch {
       set_selected_source(null);
+      set_create_project_name(build_default_project_name(undefined));
       push_toast("warning", t("project.create.unavailable"));
     } finally {
       set_is_source_checking(false);
@@ -256,13 +274,15 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
 
   /**
    * 按保存模式解析新建工程输出路径，固定目录缺失时先请求用户选择。
-   * 既没有来源也没有拖入路径时，源目录模式改为手动选择保存位置。
+   * 文件名使用本次工程名草稿，留空时回退到自动名称；手动模式只把名称作为对话框预填。
    */
   async function resolve_project_output_path(
     anchor_path: string | undefined,
-    project_name: string | undefined,
   ): Promise<string | null> {
-    const default_file_name = build_default_project_file_name(project_name);
+    const default_file_name = build_project_file_name(
+      create_project_name,
+      build_default_project_name(undefined),
+    );
     const save_mode = settings_snapshot.project_save_mode;
 
     if (save_mode === "SOURCE" && anchor_path !== undefined) {
@@ -305,8 +325,9 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     set_is_language_dialog_open(true);
   }
 
-  /** 确认即保存偏好，再使用同一份语言快照创建工程。 */
+  /** 确认即保存偏好，再使用同一份语言与工程名快照创建工程。 */
   function confirm_language_dialog(): void {
+    if (project_name_invalid) return;
     const languages = { ...create_languages }; // 路径选择期间固定本次提交值。
     save_project_language_preference(languages);
     set_is_language_dialog_open(false);
@@ -326,18 +347,8 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
       const source_paths = selected_source?.source_paths ?? [];
       const godot_pack_orders = await pack_order.request_order(selected_source?.godot_packs);
       if (godot_pack_orders === null) return;
-      // AGENT 来源只查询名称，文件发现与导入留给后续对话。
-      let project_name = selected_source?.project_name;
-      if (project_name === undefined && import_paths.length > 0) {
-        const payload = await api_fetch<Pick<ProjectSourceFileSummary, "project_name">>(
-          "/api/session/project/default-name",
-          { source_paths: import_paths },
-        );
-        project_name = payload.project_name;
-      }
       const output_path = await resolve_project_output_path(
         selected_source?.source_paths[0] ?? import_paths[0],
-        project_name,
       );
       if (output_path === null || output_path === "") {
         return;
@@ -404,10 +415,20 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     push_toast("warning", t("app.drop.select_unavailable"));
   }
 
-  /** 拖入路径由 Agent 导入，创建阶段只确认语言与保存位置。 */
-  function start_from_paths(paths: readonly string[]): void {
+  /** 拖入路径由 Agent 导入，创建阶段先解析默认工程名供用户修改。 */
+  async function start_from_paths(paths: readonly string[]): Promise<void> {
     set_selected_source(null);
     set_import_paths(paths);
+    set_create_project_name(build_default_project_name(undefined));
+    try {
+      const payload = await api_fetch<Pick<ProjectSourceFileSummary, "project_name">>(
+        "/api/session/project/default-name",
+        { source_paths: [...paths] },
+      );
+      set_create_project_name(build_default_project_name(payload.project_name));
+    } catch {
+      // 名称只用于预填，失败时保留本地自动名称；创建请求本身会报告真实失败。
+    }
     set_is_language_dialog_open(true);
   }
 
@@ -429,6 +450,9 @@ export function useProjectCreateFlow(run_project_load: RunProjectLoad) {
     is_language_dialog_open,
     create_languages,
     set_create_languages,
+    create_project_name,
+    set_create_project_name,
+    project_name_invalid,
     set_is_language_dialog_open,
     pack_order,
     backup_confirm,

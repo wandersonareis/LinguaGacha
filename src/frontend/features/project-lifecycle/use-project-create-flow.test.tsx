@@ -190,7 +190,9 @@ it("拖入创建清除旧来源，按首个路径保存并预填全部路径，�
   mocks.api.mockResolvedValueOnce(game_summary);
   await act(async () => flow.handle_select_source_paths(["E:/games/Game.v1.2"]));
   act(() => flow.close());
-  act(() => flow.start_from_paths(["E:/src/a.txt", "E:/src/b"]));
+  await act(async () => {
+    await flow.start_from_paths(["E:/src/a.txt", "E:/src/b"]);
+  });
   expect(flow.open).toBe(false);
   expect(flow.is_language_dialog_open).toBe(true);
   expect(flow.backup_confirm.dialog_props.open).toBe(false);
@@ -217,7 +219,10 @@ it("拖入创建清除旧来源，按首个路径保存并预填全部路径，�
 it.each(["MANUAL", "FIXED"])("拖入创建在 %s 模式沿用后端名称", async (mode) => {
   mocks.state.settings_snapshot.project_save_mode = mode;
   mocks.api.mockResolvedValueOnce({ project_name: "Game.v1.2" });
-  act(() => flow.start_from_paths(["E:/games/Game.v1.2"]));
+  await act(async () => {
+    await flow.start_from_paths(["E:/games/Game.v1.2"]);
+  });
+  expect(flow.create_project_name).toBe("Game.v1.2");
   await act(async () => flow.confirm_language_dialog());
   expect(mocks.api).toHaveBeenCalledWith("/api/session/project/default-name", {
     source_paths: ["E:/games/Game.v1.2"],
@@ -233,14 +238,20 @@ it.each(["MANUAL", "FIXED"])("拖入创建在 %s 模式沿用后端名称", asyn
   await act(async () => vi.runAllTimersAsync());
 });
 
-it("拖入名称查询失败时提示错误并停止创建，再次确认可以重试", async () => {
-  act(() => flow.start_from_paths(["E:/src/a.txt"]));
+it("拖入名称查询失败时回退到自动名称并继续创建", async () => {
   mocks.api.mockRejectedValueOnce(new Error("name lookup failed"));
+  await act(async () => {
+    await flow.start_from_paths(["E:/src/a.txt"]);
+  });
+  expect(flow.is_language_dialog_open).toBe(true);
+  expect(flow.create_project_name).toMatch(/^lg_project_\d{8}_\d{6}$/u);
   await act(async () => flow.confirm_language_dialog());
-  expect(mocks.error).toHaveBeenCalledOnce();
-  expect(mocks.api).not.toHaveBeenCalledWith("/api/session/project/create", expect.anything());
-  expect(flow.source_selection_disabled).toBe(false);
-  await create();
+  expect(mocks.api).toHaveBeenCalledWith(
+    "/api/session/project/create",
+    expect.objectContaining({
+      path: expect.stringMatching(/^E:\/src\/lg_project_\d{8}_\d{6}\.lg$/u),
+    }),
+  );
   await act(async () => vi.runAllTimersAsync());
   expect(mocks.loaded).toHaveBeenCalledWith("E:/actual.lg");
 });
@@ -248,6 +259,7 @@ it("拖入名称查询失败时提示错误并停止创建，再次确认可以�
 it("游戏来源依次确认备份、语言和包顺序，按摘要名称在来源目录创建", async () => {
   mocks.api.mockResolvedValueOnce(game_summary);
   await act(async () => flow.handle_select_source_paths(["E:/games/Game.v1.2"]));
+  expect(flow.create_project_name).toBe("Game.v1.2");
   act(() => {
     void flow.open_language_dialog();
   });
@@ -316,3 +328,38 @@ it("包列表变化时重新摘要原始来源并保留创建入口", async () =
   expect(flow.open).toBe(true);
   expect(mocks.error).toHaveBeenCalledOnce();
 });
+
+it("使用用户输入的工程名，并去掉重复的 .lg 后缀", async () => {
+  mocks.state.settings_snapshot.project_save_mode = "FIXED";
+  act(() => flow.set_create_project_name("Minha Tradução.lg"));
+  await create();
+  expect(mocks.api).toHaveBeenCalledWith("/api/session/project/create", {
+    source_paths: [],
+    path: "E:/fixed/Minha Tradução.lg",
+    languages: expect.any(Object),
+  });
+  await act(async () => vi.runAllTimersAsync());
+  expect(mocks.loaded).toHaveBeenCalledWith("E:/actual.lg");
+});
+
+it("工程名留空时回退到自动生成名称", async () => {
+  mocks.state.settings_snapshot.project_save_mode = "FIXED";
+  act(() => flow.set_create_project_name("   "));
+  await create();
+  expect(mocks.api).toHaveBeenCalledWith(
+    "/api/session/project/create",
+    expect.objectContaining({
+      path: expect.stringMatching(/^E:\/fixed\/lg_project_\d{8}_\d{6}\.lg$/u),
+    }),
+  );
+  await act(async () => vi.runAllTimersAsync());
+});
+
+it("工程名包含无效字符时不提交创建", async () => {
+  act(() => flow.set_create_project_name("a/b"));
+  expect(flow.project_name_invalid).toBe(true);
+  await create();
+  expect(mocks.api).not.toHaveBeenCalledWith("/api/session/project/create", expect.anything());
+  expect(mocks.loaded).not.toHaveBeenCalled();
+});
+
